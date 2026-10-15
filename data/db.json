@@ -1,0 +1,149 @@
+{
+  "adminPassword": "mlbarber2026",
+  "barbershop": {
+    "name": "ML Barber",
+    "fullName": "ML Barber — Barbearia em Carlos Barbosa",
+    "founder": "Mateus Lopes",
+    "city": "Carlos Barbosa — Serra Gaúcha, RS",
+    "tagline": "Cortes que elevam sua presença",
+    "subtagline": "Estilo, atitude e identidade. Mais que um corte, uma experiência.",
+    "instagram": "mlbarber._",
+    "whatsapp": "5554999999999",
+    "externalBookingUrl": "https://sites.appbarber.com.br/mlbarber-2lrz",
+    "useExternalRedirect": false,
+    "followersCount": "3.980+",
+    "postsCount": "127+",
+    "statusBanner": "Agenda Aberta • Carlos Barbosa/RS",
+    "aboutText": "Comandada por Mateus Lopes no coração de Carlos Barbosa (Serra Gaúcha), a ML Barber une um ambiente moderno e acolhedor — marcado pela nossa clássica parede de samambaias e iluminação hexagonal — a uma equipe de barbeiros especialistas em visagismo, fade limpo e acabamento preciso.",
+    "logoUrl": "/assets/logo-ml.webp",
+    "founderImageUrl": "/assets/mateus-hero.webp",
+    "spaceImages": [
+      "/assets/espaco-principal.webp",
+      "/assets/espaco-bancada.webp",
+      "/assets/espaco-cadeira.webp"
+    ]
+  },
+  "barbers": [
+    {
+      "id": "mateus",
+      "name": "Mateus Lopes",
+      "role": "Fundador & Master Barber",
+      "instagram": "mlbarber._",
+      "bio": "Fundador da ML Barber. Especialista em visagismo masculino, cortes clássicos e modernos, barba estruturada e experiência completa na cadeira.",
+      "specialties": ["Visagismo", "Degradê Preciso", "Barboterapia", "Tesoura"],
+      "avatarUrl": "/assets/mateus-hero.webp",
+      "active": true,
+      "isFounder": true,
+      "availableTimes": ["09:00", "10:00", "11:00", "14:00", "15:30", "17:00", "18:30"]
+    },
+    {
+      "id": "alex",
+      "name": "Alex Minuzzo",
+      "role": "Barbeiro Especialista",
+      "instagram": "alexminuzzo_barbeiro",
+      "bio": "Focado em fade limpo, acabamento milimétrico, cortes texturizados e taper fade para todos os tipos de cabelo.",
+      "specialties": ["Fade Limpo", "Taper Fade", "Texturizado", "Acabamento Navalhado"],
+      "avatarUrl": "/assets/corte-fade-1.webp",
+      "active": true,
+      "isFounder": false,
+      "availableTimes": ["09:30", "10:30", "13:30", "15:00", "16:30", "18:00", "19:00"]
+    },
+    {
+      "id": "afonso",
+      "name": "Afonso",
+      "role": "Barbeiro Profissional",
+      "instagram": "afonsobarber_01",
+      "bio": "Atendimento focado em cortes modernos, degradê, alinhamento de barba e sobrancelha na navalha.",
+      "specialties": ["Degradê", "Barba Alinhada", "Freestyle & Nevou"],
+      "avatarUrl": "/assets/corte-medio-3.webp",
+      "active": true,
+      "isFounder": false,
+      "availableTimes": ["10:00", "11:30", "14:00", "16:00", "17:30", "19:00"]
+    }
+  ],
+  "services": [
+    {
+      "id": "srv-corte",
+      "name": "Corte Masculino (Social / Degradê / Tesoura)",
+      "durationMin": 45,
+      "price": 50,
+      "category": "cabelo",
+      "description": "Corte personalizado com lavagem, acabamento na navalha e finalização com pomada."
+    },
+    {
+      "id": "srv-combo",
+      "name": "Combo Completo (Corte + Barba + Sobrancelha)",
+      "durationMin": 75,
+      "price": 85,
+      "category": "combo",
+      "description": "A experiência completa da ML Barber: corte preciso, alinhamento de barba com toalha quente e sobrancelha."
+    },
+    {
+      "id": "srv-barba",
+      "name": "Barba Completa & Alinhamento",
+      "durationMin": 30,
+      "price": 40,
+      "category": "barba",
+      "description": "Modelagem de barba, hidratação dos fios e contorno limpo na navalha."
+    },
+    {
+      "id": "srv-sobrancelha",
+      "name": "Acabamento & Sobrancelha",
+      "durationMin": 15,
+      "price": 20,
+      "category": "acabamento",
+      "description": "Limpeza e alinhamento natural na navalha ou pinça."
+    },
+    {
+      "id": "srv-nevou",
+      "name": "Platinado / Nevou / Química",
+      "durationMin": 120,
+      "price": 150,
+      "category": "quimica",
+      "description": "Descoloração global segura com matização e reconstrução capilar."
+    }
+  ],
+  "posts": [
+    {
+      "id": "post-1",
+      "barberId": "mateus",
+      "title": "Corte Médio Texturizado & Barba Alinhada",
+      "styleTag": "Visagismo & Tesoura",
+      "featured": true,
+      "imageUrl": "/assets/corte-medio-3.webp"
+    },
+    {
+      "id": "post-2",
+      "barberId": "alex",
+      "title": "Fade Limpo & Acabamento Preciso na Tesoura",
+      "styleTag": "Low Fade Texturizado",
+      "featured": true,
+      "imageUrl": "/assets/corte-fade-1.webp"
+    },
+    {
+      "id": "post-3",
+      "barberId": "alex",
+      "title": "Taper Fade em Cabelo Cacheado / Crespo",
+      "styleTag": "Taper Fade",
+      "featured": true,
+      "imageUrl": "/assets/corte-taper-2.webp"
+    },
+    {
+      "id": "post-4",
+      "barberId": "mateus",
+      "title": "Ambiente ML Barber • Parede de Samambaia",
+      "styleTag": "A Experiência",
+      "featured": false,
+      "imageUrl": "/assets/espaco-principal.webp"
+    },
+    {
+      "id": "post-5",
+      "barberId": "afonso",
+      "title": "Estrutura & Poltronas Clássicas ML Barber",
+      "styleTag": "O Espaço",
+      "featured": false,
+      "imageUrl": "/assets/espaco-cadeira.webp"
+    }
+  ],
+  "appointments": []
+}
