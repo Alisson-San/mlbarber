@@ -31,3 +31,4 @@ Plataforma web oficial de presença digital, vitrine dinâmica multi-barbeiros, 
    - **Site Principal:** `http://localhost:3000`
    - **Agenda Online:** `http://localhost:3000/agenda`
    - **Painel Admin:** `http://localhost:3000/admin` (Senha padrão: `mlbarber2026`)
+# mlbarber
