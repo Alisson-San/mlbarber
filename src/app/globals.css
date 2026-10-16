@@ -3,35 +3,22 @@
 @tailwind utilities;
 
 body {
-  background-color: #FAF8F5;
-  color: #141615;
+  background-color: #0F1411;
+  color: #FAF8F5;
   overflow-x: hidden;
 }
 
-/* Textura Botânica da Parede de Folhas de Samambaia + Luz Hexagonal do Teto */
-.fern-botanical-bg {
-  background-color: #1B3B2B;
-  background-image:
-    radial-gradient(circle at 50% 20%, rgba(74, 88, 72, 0.55) 0%, rgba(17, 38, 27, 0.94) 80%),
-    url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M30 5 L52 17.5 L52 42.5 L30 55 L8 42.5 L8 17.5 Z' fill='none' stroke='%23ffffff' stroke-width='0.6' stroke-opacity='0.08'/%3E%3C/svg%3E");
+/* Efeito de Blur Sumindo Abaixo no Título Monumental ML BARBER */
+.title-blur-fade {
+  mask-image: linear-gradient(to bottom, rgba(0,0,0,1) 42%, rgba(0,0,0,0.25) 82%, rgba(0,0,0,0) 100%);
+  -webkit-mask-image: linear-gradient(to bottom, rgba(0,0,0,1) 42%, rgba(0,0,0,0.25) 82%, rgba(0,0,0,0) 100%);
 }
 
-/* Padrão Claro Bege/Branco com Hexágonos sutis (Inspirado nas luminárias LED da ML Barber) */
-.hex-light-bg {
-  background-color: #FAF8F5;
-  background-image:
-    radial-gradient(circle at 50% 0%, rgba(239, 236, 228, 0.9) 0%, rgba(250, 248, 245, 1) 75%),
-    url("data:image/svg+xml,%3Csvg width='56' height='56' viewBox='0 0 56 56' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M28 4 L50 16 L50 40 L28 52 L6 40 L6 16 Z' fill='none' stroke='%231B3B2B' stroke-width='0.6' stroke-opacity='0.06'/%3E%3C/svg%3E");
+/* Scrollbar limpa nos seletores horizontais mobile */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
 }
-
-/* Efeito Pedido pelo Usuário: Texto Grande ML BARBER sumindo com Blur para baixo */
-.title-blur-fade-bottom {
-  position: relative;
-  -webkit-mask-image: linear-gradient(180deg, rgba(0,0,0,1) 0%, rgba(0,0,0,0.85) 48%, rgba(0,0,0,0.18) 82%, rgba(0,0,0,0) 100%);
-  mask-image: linear-gradient(180deg, rgba(0,0,0,1) 0%, rgba(0,0,0,0.85) 48%, rgba(0,0,0,0.18) 82%, rgba(0,0,0,0) 100%);
-}
-
-.gpu-layer {
-  will-change: transform, opacity;
-  transform: translate3d(0, 0, 0);
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
 }

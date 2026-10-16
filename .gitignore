@@ -1,5 +1,6 @@
 # Dependencies
 /node_modules
+**/node_modules
 /.pnp
 .pnp.js
 .yarn/install-state.gz
@@ -11,9 +12,15 @@
 # Production
 /build
 
-# Misc
+# Raw source media & temporary prompts (not needed in Git/Vercel)
+/raw/
+/public/assets/tour.mp4
+AGENT_*.md
+
+# Misc & OS / WSL metadata
 .DS_Store
 *.pem
+*:Zone.Identifier
 
 # Debug logs
 npm-debug.log*
@@ -31,6 +38,6 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-# Uploads temporários de usuários (mantendo estrutura se necessário)
+# Uploads temporários de usuários
 /public/uploads/*
 !/public/uploads/.gitkeep

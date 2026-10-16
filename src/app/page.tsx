@@ -1,539 +1,853 @@
 "use client";
 
-import React, { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import gsap from "gsap";
 import { ScrollTrigger } from "gsap/ScrollTrigger";
 import Lenis from "lenis";
-import BarberAssistantWidget from "@/components/BarberAssistantWidget";
 
-export default function MLBarberHome() {
-  const [data, setData] = useState<any>(null);
-  const [selectedBarberId, setSelectedBarberId] = useState<string>("all");
+const INITIAL_DATA = {
+  shop: {
+    name: "ML BARBER",
+    tagline: "Cortes que elevam sua presença",
+    subtitle: "Estilo, atitude e identidade em Carlos Barbosa — Serra Gaúcha",
+    whatsapp: "5554999999999",
+    instagram: "mlbarber._",
+    city: "Carlos Barbosa - RS",
+    followers: "+3.980",
+    clientsServed: "+5.200",
+    activeBarbersCount: "2",
+    experienceLabel: "Referência na Serra",
+  },
+  barbers: [
+    {
+      id: "mateus",
+      name: "Mateus Lopes",
+      role: "Fundador & Master Barber",
+      chair: "Cadeira 01",
+      specialty: "Degradê Navalhado, Barboterapia & Visagismo",
+      avatarUrl: "/assets/barber-mateus.webp",
+      active: true,
+    },
+    {
+      id: "alex",
+      name: "Alex Minuzzo",
+      role: "Barber Stylist",
+      chair: "Cadeira 02",
+      specialty: "Fade Limpo, Texturizado & Acabamento Preciso",
+      avatarUrl: "/assets/barber-alex.webp",
+      active: true,
+    },
+  ],
+  services: [
+    { id: "corte", name: "Corte Masculino / Fade", duration: "40 min", price: 50 },
+    { id: "combo", name: "Combo Corte + Barba Completa", duration: "60 min", price: 80 },
+    { id: "barba", name: "Barboterapia Toalha Quente", duration: "30 min", price: 40 },
+    { id: "acabamento", name: "Pezinho + Sobrancelha na Navalha", duration: "20 min", price: 25 },
+  ],
+  timeSlots: ["09:00", "10:00", "11:00", "14:00", "15:00", "16:00", "17:00", "18:00", "19:00"],
+};
 
-  const heroRef = useRef<HTMLElement | null>(null);
-  const bigTitleRef = useRef<HTMLDivElement | null>(null);
-  const mateusLayerRef = useRef<HTMLDivElement | null>(null);
-  const emergingLogoRef = useRef<HTMLDivElement | null>(null);
-  const floatingToolsRef = useRef<HTMLDivElement | null>(null);
+const TOTAL_VIDEO_FRAMES = 240;
 
+type UiStage = "hero" | "wide" | "workbench" | "booking";
+
+export default function MLBarberVideoExperience() {
+  const [data, setData] = useState<any>(INITIAL_DATA);
+  const [uiStage, setUiStage] = useState<UiStage>("hero");
+
+  // Estados do Menu Prático de Agendamento (Ato 3 - Cadeira de Frente)
+  const [selectedBarberId, setSelectedBarberId] = useState<string>("mateus");
+  const [selectedServiceId, setSelectedServiceId] = useState<string>("combo");
+  const [selectedDate, setSelectedDate] = useState<string>(() =>
+    new Date().toISOString().slice(0, 10)
+  );
+  const [selectedTime, setSelectedTime] = useState<string>("15:00");
+  const [clientName, setClientName] = useState<string>("");
+  const [clientPhone, setClientPhone] = useState<string>("");
+  const [bookingConfirmed, setBookingConfirmed] = useState<any>(null);
+
+  const scrollWrapperRef = useRef<HTMLDivElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const heroContainerRef = useRef<HTMLDivElement | null>(null);
+  const progressBarRef = useRef<HTMLDivElement | null>(null);
+  const stageRef = useRef<UiStage>("hero");
+
+  // Sincroniza dados dinâmicos do painel Admin sem bloquear a abertura imediata do site
   useEffect(() => {
-    fetch("/api/barber")
-      .then((r) => r.json())
-      .then((res) => {
-        setData(res);
-      });
+    fetch("/api/shop")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d?.shop) {
+          setData(d);
+          const firstActive = d.barbers?.find((b: any) => b.active);
+          if (firstActive) setSelectedBarberId(firstActive.id);
+        }
+      })
+      .catch(() => {});
   }, []);
 
+  // Motor Canvas 60fps/120fps com 240 Quadros Nativos (24fps), Sub-Frame Blending e ZERO Re-renders do React no Scroll
   useEffect(() => {
-    if (!data) return;
+    const wrapper = scrollWrapperRef.current;
+    const canvas = canvasRef.current;
+    if (!wrapper || !canvas) return;
+
     gsap.registerPlugin(ScrollTrigger);
     ScrollTrigger.config({ ignoreMobileResize: true });
 
     const isMobile = window.innerWidth < 768;
     let lenis: Lenis | null = null;
+    const onTicker = (t: number) => lenis?.raf(t * 1000);
+
     if (!isMobile) {
-      lenis = new Lenis({ lerp: 0.085, smoothWheel: true });
+      lenis = new Lenis({ lerp: 0.12, wheelMultiplier: 1.1, smoothWheel: true });
       lenis.on("scroll", ScrollTrigger.update);
+      gsap.ticker.add(onTicker);
+      gsap.ticker.lagSmoothing(0);
     }
 
-    const tick = (time: number) => {
-      if (lenis) lenis.raf(time * 1000);
+    const ctx = canvas.getContext("2d", { alpha: false, desynchronized: true });
+    const images: (HTMLImageElement | null)[] = new Array(TOTAL_VIDEO_FRAMES).fill(null);
+    const loadedFlags: boolean[] = new Array(TOTAL_VIDEO_FRAMES).fill(false);
+    const playhead = { progress: 0 };
+
+    // Função de suavização Hermite (evita trancos de velocidade ao entrar e sair dos Timelapses)
+    const smoothstep = (t: number) => t * t * (3 - 2 * t);
+
+    // Curva de Scroll Não-Linear para 240 quadros nativos (0 a 239):
+    // • 0.00 -> 0.22: Abertura do nome + Visão limpa da barbearia inteira (Quadros 0 a 40)
+    // • 0.22 -> 0.30: TIMELAPSE 1 — Acelera suavemente até a bancada (Quadros 40 a 107)
+    // • 0.30 -> 0.60: Motion suave na bancada de ferramentas (Quadros 107 a 155)
+    // • 0.60 -> 0.68: TIMELAPSE 2 — Acelera da bancada para a cadeira (Quadros 155 a 184)
+    // • 0.68 -> 0.88: Giro suave da cadeira de frente para a câmera (Quadros 184 a 239)
+    // • 0.88 -> 1.00: Cadeira posicionada + Menu de Agendamento (Quadro 239)
+    const mapProgressToExactFrame = (p: number): number => {
+      const clamped = Math.max(0, Math.min(1, p));
+      if (clamped <= 0.22) {
+        return (clamped / 0.22) * 40;
+      }
+      if (clamped <= 0.3) {
+        const t = smoothstep((clamped - 0.22) / 0.08);
+        return 40 + t * (107 - 40);
+      }
+      if (clamped <= 0.6) {
+        const t = (clamped - 0.3) / 0.3;
+        return 107 + t * (155 - 107);
+      }
+      if (clamped <= 0.68) {
+        const t = smoothstep((clamped - 0.6) / 0.08);
+        return 155 + t * (184 - 155);
+      }
+      if (clamped <= 0.88) {
+        const t = (clamped - 0.68) / 0.2;
+        return 184 + t * (239 - 184);
+      }
+      return 239;
     };
-    gsap.ticker.add(tick);
 
-    const ctx = gsap.context(() => {
-      // Entrada Inicial Suave
-      gsap.fromTo(
-        ".hero-enter",
-        { y: 40, opacity: 0 },
-        { y: 0, opacity: 1, duration: 1, stagger: 0.12, ease: "power3.out" }
-      );
+    // Encontra o quadro carregado mais próximo caso o usuário role antes do fim do pré-carregamento
+    const getNearestLoadedImage = (targetIdx: number): HTMLImageElement | null => {
+      if (loadedFlags[targetIdx] && images[targetIdx]) return images[targetIdx];
+      for (let delta = 1; delta < TOTAL_VIDEO_FRAMES; delta++) {
+        const prev = targetIdx - delta;
+        const next = targetIdx + delta;
+        if (prev >= 0 && loadedFlags[prev] && images[prev]) return images[prev];
+        if (next < TOTAL_VIDEO_FRAMES && loadedFlags[next] && images[next]) return images[next];
+      }
+      return null;
+    };
 
-      // Coreografia no Scroll pedida pelo usuário:
-      // O nome grande ML BARBER com blur vai subindo/desfocando, o Mateus tem paralaxe e a Logo Circular surge com destaque
-      if (heroRef.current && bigTitleRef.current && mateusLayerRef.current && emergingLogoRef.current) {
-        const tl = gsap.timeline({
-          scrollTrigger: {
-            trigger: heroRef.current,
-            start: "top top",
-            end: "bottom top",
-            scrub: 0.6,
-          },
-        });
+    // Desenha o quadro com interpolação sub-frame (suaviza 24fps para 60fps+ nos movimentos lentos)
+    const renderFrame = (exactFrame: number) => {
+      if (!ctx) return;
+      const baseIdx = Math.max(0, Math.min(TOTAL_VIDEO_FRAMES - 1, Math.floor(exactFrame)));
+      const nextIdx = Math.min(TOTAL_VIDEO_FRAMES - 1, baseIdx + 1);
+      const frac = exactFrame - baseIdx;
 
-        tl.to(
-          bigTitleRef.current,
-          { yPercent: -35, scale: 1.08, opacity: 0.15, ease: "none" },
-          0
-        )
-          .to(
-            mateusLayerRef.current,
-            { yPercent: 12, scale: 0.94, opacity: 0.25, ease: "none" },
-            0
-          )
-          .fromTo(
-            emergingLogoRef.current,
-            { scale: 0.72, y: 60, opacity: 0.85 },
-            { scale: 1.15, y: -30, opacity: 1, ease: "none" },
-            0
-          );
+      const img = getNearestLoadedImage(baseIdx);
+      if (!img) return;
+
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const cw = Math.max(1, Math.floor(canvas.clientWidth * dpr));
+      const ch = Math.max(1, Math.floor(canvas.clientHeight * dpr));
+
+      if (canvas.width !== cw || canvas.height !== ch) {
+        canvas.width = cw;
+        canvas.height = ch;
       }
 
-      // Ícones Vetoriais de Tesoura, Navalha, Máquina e Bigode flutuando em paralaxe
-      if (floatingToolsRef.current) {
-        gsap.to(".barber-tool-icon", {
-          y: -45,
-          rotate: 12,
-          stagger: 0.1,
-          ease: "none",
-          scrollTrigger: {
-            trigger: heroRef.current,
-            start: "top top",
-            end: "bottom top",
-            scrub: true,
-          },
-        });
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = "high";
+
+      const imgRatio = img.naturalWidth / img.naturalHeight;
+      const canvasRatio = cw / ch;
+
+      // Suaviza o enquadramento pelos quadros reais da bancada (72..173 em 24fps), ocultando o reflexo superior
+      let toolFocusBell = 0;
+      if (exactFrame >= 72 && exactFrame < 105) {
+        toolFocusBell = 0.5 - 0.5 * Math.cos(((exactFrame - 72) / 33) * Math.PI);
+      } else if (exactFrame >= 105 && exactFrame <= 155) {
+        toolFocusBell = 1;
+      } else if (exactFrame > 155 && exactFrame <= 173) {
+        toolFocusBell = 0.5 + 0.5 * Math.cos(((exactFrame - 155) / 18) * Math.PI);
       }
+
+      const extraZoom = 1 + toolFocusBell * 0.22;
+
+      let baseW = cw;
+      let baseH = ch;
+      if (canvasRatio > imgRatio) {
+        baseH = cw / imgRatio;
+      } else {
+        baseW = ch * imgRatio;
+      }
+
+      const drawW = baseW * extraZoom;
+      const drawH = baseH * extraZoom;
+
+      // Foco horizontal responsivo (no celular, foca na cadeira girando à esquerda no Ato 3)
+      let focalX = 0.5;
+      if (canvasRatio < 1) {
+        if (exactFrame < 72) focalX = 0.48;
+        else if (exactFrame <= 173) focalX = 0.5;
+        else focalX = 0.37;
+      }
+
+      // Foco vertical (desce para 0.88 durante os quadros da bancada para destacar máquinas e tesouras)
+      const focalY = 0.5 + toolFocusBell * 0.38;
+
+      const offsetX = (cw - drawW) * focalX;
+      const offsetY = (ch - drawH) * focalY;
+
+      ctx.globalAlpha = 1;
+      ctx.drawImage(img, offsetX, offsetY, drawW, drawH);
+
+      // Sub-frame blending: mistura suavemente o próximo quadro quando ambos estão carregados
+      if (frac > 0.04 && frac < 0.96 && loadedFlags[baseIdx] && loadedFlags[nextIdx] && images[nextIdx]) {
+        ctx.globalAlpha = frac;
+        ctx.drawImage(images[nextIdx]!, offsetX, offsetY, drawW, drawH);
+        ctx.globalAlpha = 1;
+      }
+    };
+
+    // Atualiza elementos contínuos direto na GPU via DOM ref (sem acionar re-render do React a cada frame!)
+    const syncContinuousDOM = (p: number) => {
+      if (heroContainerRef.current) {
+        const heroExit = Math.min(1, Math.max(0, p / 0.13));
+        const opacity = Math.max(0, 1 - heroExit * 1.15);
+        heroContainerRef.current.style.opacity = String(opacity);
+        heroContainerRef.current.style.transform = `translate3d(0, ${-heroExit * 68}px, 0) scale(${1 + heroExit * 0.05})`;
+        heroContainerRef.current.style.pointerEvents = heroExit < 0.92 ? "auto" : "none";
+      }
+
+      if (progressBarRef.current) {
+        progressBarRef.current.style.width = `${Math.max(2, p * 100)}%`;
+      }
+
+      // Só aciona o React quando muda de cena (apenas 3 vezes em todo o scroll!)
+      const nextStage: UiStage =
+        p < 0.11 ? "hero" : p < 0.27 ? "wide" : p < 0.65 ? "workbench" : "booking";
+      if (nextStage !== stageRef.current) {
+        stageRef.current = nextStage;
+        setUiStage(nextStage);
+      }
+    };
+
+    // Carrega quadros em ordem de prioridade com decodificação assíncrona fora da thread principal (img.decode)
+    let cancelled = false;
+    const priorityOrder: number[] = [0];
+    // Passo 1: Keyframes espaçados a cada 6 quadros (garante cobertura imediata de todo o vídeo)
+    for (let i = 5; i < TOTAL_VIDEO_FRAMES; i += 6) priorityOrder.push(i);
+    // Passo 2: Quadros pares intermediários
+    for (let i = 2; i < TOTAL_VIDEO_FRAMES; i += 2) {
+      if (!priorityOrder.includes(i)) priorityOrder.push(i);
+    }
+    // Passo 3: Todos os quadros restantes para 24fps completos
+    for (let i = 1; i < TOTAL_VIDEO_FRAMES; i++) {
+      if (!priorityOrder.includes(i)) priorityOrder.push(i);
+    }
+
+    const loadSingleFrame = (idx: number): Promise<void> =>
+      new Promise((resolve) => {
+        if (cancelled) return resolve();
+        const img = new Image();
+        img.decoding = "async";
+        img.src = `/assets/tour-frames/frame_${String(idx + 1).padStart(4, "0")}.webp?v=24fps`;
+        img.onload = () => {
+          if (cancelled) return resolve();
+          // Decodifica o bitmap em background antes de entregar ao canvas (evita engasgos no drawImage)
+          img
+            .decode()
+            .catch(() => {})
+            .finally(() => {
+              if (cancelled) return resolve();
+              images[idx] = img;
+              loadedFlags[idx] = true;
+              const currentExact = mapProgressToExactFrame(playhead.progress);
+              if (idx === 0 || Math.abs(idx - currentExact) <= 4) {
+                renderFrame(currentExact);
+              }
+              resolve();
+            });
+        };
+        img.onerror = () => resolve();
+      });
+
+    (async () => {
+      await loadSingleFrame(0);
+      const concurrency = 8;
+      let cursor = 1;
+      const workers = Array.from({ length: concurrency }, async () => {
+        while (!cancelled && cursor < priorityOrder.length) {
+          const nextIdx = priorityOrder[cursor++];
+          await loadSingleFrame(nextIdx);
+        }
+      });
+      await Promise.all(workers);
+    })();
+
+    // IMPORTANTE: onUpdate fica no Tween (e não no scrollTrigger) para rodar a 60fps/120fps durante toda a interpolação do scrub!
+    const st = gsap.to(playhead, {
+      progress: 1,
+      ease: "none",
+      onUpdate: () => {
+        const p = playhead.progress;
+        syncContinuousDOM(p);
+        renderFrame(mapProgressToExactFrame(p));
+      },
+      scrollTrigger: {
+        trigger: wrapper,
+        start: "top top",
+        end: "bottom bottom",
+        scrub: 0.4,
+      },
     });
 
+    const handleResize = () => {
+      renderFrame(mapProgressToExactFrame(playhead.progress));
+    };
+    window.addEventListener("resize", handleResize);
+
     return () => {
-      gsap.ticker.remove(tick);
-      ctx.revert();
+      cancelled = true;
+      window.removeEventListener("resize", handleResize);
+      st.scrollTrigger?.kill();
+      st.kill();
+      gsap.ticker.remove(onTicker);
       lenis?.destroy();
     };
-  }, [data]);
+  }, []);
 
-  if (!data) {
-    return (
-      <div className="min-h-screen bg-alabaster flex items-center justify-center">
-        <div className="text-center space-y-3">
-          <div className="w-16 h-16 rounded-full border-4 border-fern border-t-transparent animate-spin mx-auto" />
-          <p className="font-display font-bold text-fern uppercase tracking-widest text-sm">
-            ML Barber • Carregando Experiência...
-          </p>
-        </div>
-      </div>
-    );
+  // Função para rolar suavemente até um momento específico do vídeo quando o usuário clica no Menu Rápido
+  function jumpToMoment(targetPct: number) {
+    if (!scrollWrapperRef.current) return;
+    const maxScroll = scrollWrapperRef.current.scrollHeight - window.innerHeight;
+    window.scrollTo({ top: maxScroll * targetPct, behavior: "smooth" });
   }
 
-  const { barbershop, barbers, services, posts } = data;
+  async function handleConfirmBooking(e: React.FormEvent) {
+    e.preventDefault();
+    if (!clientName || !clientPhone || !data) return;
+
+    const barber = data.barbers.find((b: any) => b.id === selectedBarberId);
+    const service = data.services.find((s: any) => s.id === selectedServiceId);
+
+    const payload = {
+      clientName,
+      clientPhone,
+      barberId: barber?.id,
+      barberName: barber?.name,
+      chair: barber?.chair,
+      serviceName: service?.name,
+      price: service?.price,
+      date: selectedDate,
+      time: selectedTime,
+    };
+
+    const res = await fetch("/api/shop", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "book", booking: payload }),
+    });
+    const json = await res.json();
+    if (json.ok) {
+      setBookingConfirmed({ ...payload, id: json.booking.id });
+    }
+  }
+
+  const { shop, barbers, services, timeSlots } = data;
   const activeBarbers = barbers.filter((b: any) => b.active);
-  const filteredPosts = posts.filter((p: any) =>
-    selectedBarberId === "all" ? true : p.barberId === selectedBarberId
-  );
-  const selectedBarberObj = activeBarbers.find((b: any) => b.id === selectedBarberId);
+  const currentBarber =
+    activeBarbers.find((b: any) => b.id === selectedBarberId) || activeBarbers[0];
+  const currentService =
+    services.find((s: any) => s.id === selectedServiceId) || services[0];
+
+  const currentAct = uiStage === "hero" || uiStage === "wide" ? 1 : uiStage === "workbench" ? 2 : 3;
+  const showWideShopBadge = uiStage === "wide";
+  const showWorkbenchCard = uiStage === "workbench";
+  const showBookingCard = uiStage === "booking";
 
   return (
-    <main className="relative min-h-screen hex-light-bg text-charcoal">
-      {/* HEADER CLARO & BOTÂNICO */}
-      <header className="fixed top-0 inset-x-0 z-40 bg-alabaster/85 backdrop-blur-xl border-b border-sand-dark">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 h-20 flex items-center justify-between">
-          <a href="#" className="flex items-center gap-3">
-            <img
-              src={barbershop.logoUrl}
-              alt="ML Barber Logo"
-              className="w-12 h-12 rounded-full object-contain border border-fern/20 shadow-sm"
-            />
-            <div>
-              <span className="font-display font-extrabold text-xl tracking-tight text-charcoal block leading-none">
-                ML BARBER
-              </span>
-              <span className="text-[10px] uppercase tracking-[0.22em] text-fern font-semibold">
-                Carlos Barbosa • RS
-              </span>
-            </div>
-          </a>
-
-          <nav className="hidden md:flex items-center gap-8 text-xs uppercase tracking-[0.18em] font-bold text-charcoal/80">
-            <a href="#mateus" className="hover:text-fern transition-colors">A Barbearia</a>
-            <a href="#equipe" className="hover:text-fern transition-colors">Bancada & Barbeiros</a>
-            <a href="#servicos" className="hover:text-fern transition-colors">Valores</a>
-            <a href="/agenda" className="text-fern underline decoration-2 underline-offset-4">
-              Agenda Online
-            </a>
-            <a href="/admin" className="text-zinc-400 hover:text-charcoal">Admin</a>
-          </nav>
-
-          <div className="flex items-center gap-3">
-            <a
-              href="/agenda"
-              className="px-5 py-2.5 rounded-full bg-fern hover:bg-fern-light text-white text-xs sm:text-sm font-bold shadow-lg shadow-fern/20 transition-all hover:scale-105"
-            >
-              ✂️ Reservar Horário
-            </a>
-          </div>
-        </div>
-      </header>
-
-      {/* ATO 1: HERO SECTION (FUNDO DE SAMAMBAIA + NOME GIGANTE COM BLUR SUMINDO ABAIXO + MATEUS + LOGO SURGINDO) */}
-      <section
-        ref={heroRef}
-        className="relative min-h-[105svh] pt-28 pb-16 flex flex-col justify-between overflow-hidden"
+    <div ref={scrollWrapperRef} className="relative h-[320vh] w-full select-none">
+      {/* PALCO FIXO 100dvh ONDE O VÍDEO E OS ELEMENTOS ACONTECEM */}
+      <div
+        className="sticky top-0 h-[100dvh] w-full overflow-hidden bg-[#0F1411] bg-cover bg-center"
+        style={{ backgroundImage: "url('/assets/tour-frames/frame_0001.webp?v=24fps')" }}
       >
-        {/* Faixa Superior de Folhas de Samambaia (Assinatura Visual da ML Barber) */}
-        <div className="absolute top-20 inset-x-4 sm:inset-x-8 h-[62%] rounded-[2.5rem] fern-botanical-bg overflow-hidden shadow-2xl">
-          {/* Foto real da parede de samambaia e LEDs hexagonais em blend mode */}
-          <img
-            src={barbershop.spaceImages?.[0] || "/assets/espaco-principal.webp"}
-            alt="Parede de Samambaia ML Barber"
-            className="w-full h-full object-cover opacity-25 mix-blend-luminosity scale-105"
-          />
-          <div className="absolute inset-0 bg-gradient-to-b from-fern-dark/40 via-fern/60 to-alabaster" />
-        </div>
+        {/* CAMADA 0: VÍDEO INTERATIVO NO CANVAS */}
+        <canvas ref={canvasRef} className="absolute inset-0 w-full h-full block" />
 
-        {/* ÍCONES VETORIAIS FLUTUANTES (TESOURA, BIGODE, MÁQUINA, NAVALHA) */}
-        <div ref={floatingToolsRef} className="pointer-events-none absolute inset-0 z-10 max-w-7xl mx-auto">
-          {/* Tesoura SVG */}
-          <svg className="barber-tool-icon absolute top-36 left-[8%] w-12 h-12 text-sand/30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-            <circle cx="6" cy="6" r="3" />
-            <circle cx="6" cy="18" r="3" />
-            <line x1="20" y1="4" x2="8.12" y2="15.88" />
-            <line x1="14.47" y1="14.48" x2="20" y2="20" />
-            <line x1="8.12" y1="8.12" x2="12" y2="12" />
-          </svg>
-          {/* Bigode Clássico SVG */}
-          <svg className="barber-tool-icon absolute top-44 right-[10%] w-16 h-16 text-sand/30" viewBox="0 0 64 32" fill="currentColor">
-            <path d="M32 18c-5-8-14-12-22-8-5 2-8 7-8 11 0 3 3 5 6 4 6-2 12-7 24-7s18 5 24 7c3 1 6-1 6-4 0-4-3-9-8-11-8-4-17 0-22 8z" />
-          </svg>
-          {/* Máquina de Corte / Pente SVG */}
-          <svg className="barber-tool-icon absolute bottom-44 left-[12%] w-12 h-12 text-fern/25" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-            <rect x="7" y="4" width="10" height="16" rx="3" />
-            <path d="M7 4V2M10 4V2M14 4V2M17 4V2M12 14h.01" />
-          </svg>
-        </div>
+        {/* Vinheta Superior & Inferior (Mais transparente no meio para preservar 100% da nitidez e iluminação do vídeo) */}
+        <div
+          className={`absolute inset-0 pointer-events-none transition-opacity duration-500 bg-gradient-to-b from-black/45 via-transparent to-black/55 ${
+            showWideShopBadge ? "opacity-25" : "opacity-85"
+          }`}
+        />
 
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 w-full relative z-20 flex flex-col items-center pt-6">
-          {/* Badge de Localização */}
-          <div className="hero-enter inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-alabaster/95 border border-sand-dark text-fern text-xs font-bold uppercase tracking-widest shadow-md mb-4">
-            <span className="w-2 h-2 rounded-full bg-fern animate-ping" />
-            <span>🌿 {barbershop.statusBanner}</span>
-          </div>
+        {/* BARRA DE NAVEGAÇÃO RÁPIDA NO TOPO (Pílula Prática Desktop & Mobile) */}
+        <header className="absolute top-4 sm:top-6 inset-x-0 z-40 max-w-6xl mx-auto px-3 sm:px-6 flex items-center justify-between gap-2">
+          <button
+            onClick={() => jumpToMoment(0)}
+            className="flex items-center gap-2.5 bg-[#FAF8F5]/95 backdrop-blur-md text-[#181B19] px-3.5 py-2 rounded-full shadow-lg border border-white/40"
+          >
+            <img
+              src="/assets/logo-ml.webp"
+              alt="ML Barber"
+              onError={(e) => ((e.target as HTMLImageElement).style.display = "none")}
+              className="w-7 h-7 rounded-full object-cover"
+            />
+            <span className="font-serif font-black text-xs sm:text-sm tracking-wider">ML BARBER</span>
+          </button>
 
-          {/* NOME GIGANTE "ML BARBER" COM BLUR SUMINDO ABAIXO */}
-          <div ref={bigTitleRef} className="hero-enter w-full text-center select-none pointer-events-none gpu-layer">
-            <h1 className="font-display font-extrabold text-[15vw] sm:text-[13.5vw] leading-[0.86] tracking-tighter text-alabaster drop-shadow-sm title-blur-fade-bottom">
-              ML BARBER
-            </h1>
-          </div>
-
-          {/* COMPOSIÇÃO CENTRAL: MATEUS LOPES + LOGO EMERGINDO NA BASE COM BLUR */}
-          <div className="relative -mt-14 sm:-mt-28 flex flex-col items-center w-full max-w-4xl">
-            <div ref={mateusLayerRef} className="hero-enter relative z-10 w-72 sm:w-96 gpu-layer">
-              <img
-                src={barbershop.founderImageUrl}
-                alt={barbershop.founder}
-                className="w-full h-auto object-contain drop-shadow-[0_24px_40px_rgba(20,22,21,0.35)]"
-              />
-            </div>
-
-            {/* Névoa de Blur na Base + Logo Oficial que Surge no Scroll */}
-            <div className="relative z-20 -mt-20 w-full flex flex-col items-center pt-10 pb-4 bg-gradient-to-t from-alabaster via-alabaster/90 to-transparent backdrop-blur-[3px]">
-              <div
-                ref={emergingLogoRef}
-                className="w-28 h-28 sm:w-36 sm:h-36 rounded-full bg-white p-2 shadow-2xl border-2 border-fern/30 gpu-layer"
-              >
-                <img
-                  src={barbershop.logoUrl}
-                  alt="Selo Oficial ML Barber"
-                  className="w-full h-full object-contain rounded-full"
-                />
-              </div>
-
-              <p className="font-display text-2xl sm:text-4xl font-extrabold text-charcoal mt-5 text-center">
-                {barbershop.tagline.toUpperCase()}
-              </p>
-              <p className="text-sm sm:text-base text-charcoal/70 max-w-xl text-center mt-2">
-                Comandada por <strong className="text-fern">{barbershop.founder}</strong> e equipe. {barbershop.subtagline}
-              </p>
-
-              <div className="flex flex-col sm:flex-row items-center gap-4 mt-6">
-                <a
-                  href="/agenda"
-                  className="px-8 py-4 rounded-2xl bg-fern hover:bg-fern-light text-white font-bold text-sm uppercase tracking-wider shadow-xl shadow-fern/25 transition-all hover:scale-105"
-                >
-                  💈 Agendar Horário Online
-                </a>
-                <a
-                  href="#equipe"
-                  className="px-8 py-4 rounded-2xl bg-sand hover:bg-sand-dark text-charcoal font-bold text-sm uppercase tracking-wider border border-sand-dark transition-all"
-                >
-                  Conhecer os Barbeiros
-                </a>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* ATO 2: O FUNDADOR (MATEUS LOPES) & O ESPAÇO COM PAREDE DE SAMAMBAIA */}
-      <section id="mateus" className="py-24 bg-sand/70 border-y border-sand-dark relative z-20">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 grid lg:grid-cols-12 gap-12 items-center">
-          <div className="lg:col-span-6 space-y-5">
-            <span className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-fern/10 text-fern text-xs font-bold uppercase tracking-widest">
-              🌿 Identidade & Estrutura • Carlos Barbosa
-            </span>
-            <h2 className="font-display text-3xl sm:text-5xl font-extrabold leading-tight">
-              MATEUS LOPES & A EXPERIÊNCIA <span className="text-fern">ML BARBER</span>
-            </h2>
-            <p className="text-charcoal/80 leading-relaxed text-base">
-              {barbershop.aboutText}
-            </p>
-
-            <div className="grid grid-cols-3 gap-4 pt-4">
-              <div className="p-4 rounded-2xl bg-alabaster border border-sand-dark">
-                <p className="font-display text-2xl font-extrabold text-fern">{barbershop.followersCount}</p>
-                <p className="text-xs text-charcoal/60 uppercase font-semibold">Seguidores</p>
-              </div>
-              <div className="p-4 rounded-2xl bg-alabaster border border-sand-dark">
-                <p className="font-display text-2xl font-extrabold text-charcoal">{activeBarbers.length}</p>
-                <p className="text-xs text-charcoal/60 uppercase font-semibold">Barbeiros Ativos</p>
-              </div>
-              <div className="p-4 rounded-2xl bg-alabaster border border-sand-dark">
-                <p className="font-display text-2xl font-extrabold text-wood">100%</p>
-                <p className="text-xs text-charcoal/60 uppercase font-semibold">Acabamento Preciso</p>
-              </div>
-            </div>
-          </div>
-
-          {/* Galeria da Arquitetura (Parede de Samambaia + Bancada Verde + Cadeiras) */}
-          <div className="lg:col-span-6 grid grid-cols-2 gap-4">
-            <div className="space-y-4">
-              <img
-                src="/assets/espaco-principal.webp"
-                alt="Interior ML Barber"
-                className="w-full h-64 object-cover rounded-3xl shadow-lg border border-sand-dark"
-              />
-              <div className="p-5 rounded-3xl fern-botanical-bg text-white">
-                <p className="font-display font-bold text-lg">A Clássica Parede Verde</p>
-                <p className="text-xs text-emerald-100/80 mt-1">
-                  Nossa parede de folhas de samambaia é o cenário oficial de cada transformação na ML Barber.
-                </p>
-              </div>
-            </div>
-            <div className="space-y-4 pt-6">
-              <img
-                src="/assets/espaco-cadeira.webp"
-                alt="Poltrona ML Barber"
-                className="w-full h-52 object-cover rounded-3xl shadow-lg border border-sand-dark"
-              />
-              <img
-                src="/assets/espaco-bancada.webp"
-                alt="Bancada ML Barber"
-                className="w-full h-52 object-cover rounded-3xl shadow-lg border border-sand-dark"
-              />
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* ATO 3: SEÇÃO POR BARBEIRO (VITRINE INDIVIDUAL DE PROFISSIONAIS & FOTOS DE CORTES) */}
-      <section id="equipe" className="py-24 relative z-20">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 space-y-12">
-          <div className="flex flex-col md:flex-row md:items-end justify-between gap-6">
-            <div>
-              <span className="text-fern text-xs font-bold uppercase tracking-[0.25em]">
-                ✂️ Nossa Bancada de Profissionais
-              </span>
-              <h2 className="font-display text-3xl sm:text-5xl font-extrabold mt-1">
-                ESCOLHA SEU BARBEIRO & VEJA O PORTFÓLIO
-              </h2>
-            </div>
-            <a
-              href="/agenda"
-              className="self-start md:self-auto px-6 py-3 rounded-xl bg-fern text-white text-xs font-bold uppercase tracking-wider"
-            >
-              Ver Agenda Completa →
-            </a>
-          </div>
-
-          {/* SELETOR DE BARBEIROS (CARDS DOS PROFISSIONAIS ATIVOS) */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
+          {/* Seletor Rápido dos 3 Momentos do Vídeo */}
+          <nav className="flex items-center gap-1 bg-black/55 backdrop-blur-xl p-1 rounded-full border border-white/15">
             <button
-              onClick={() => setSelectedBarberId("all")}
-              className={`text-left p-5 rounded-3xl border-2 transition-all flex flex-col justify-between ${
-                selectedBarberId === "all"
-                  ? "fern-botanical-bg text-white border-fern shadow-xl"
-                  : "bg-sand/60 border-sand-dark text-charcoal hover:border-fern"
+              onClick={() => jumpToMoment(0)}
+              className={`px-3 sm:px-4 py-1.5 rounded-full text-[11px] font-bold uppercase tracking-wider transition-all ${
+                currentAct === 1 ? "bg-[#FAF8F5] text-[#181B19]" : "text-white/75 hover:text-white"
               }`}
             >
-              <span className="text-xs uppercase tracking-widest opacity-75 font-bold">Visão Geral</span>
-              <div className="my-4">
-                <p className="font-display text-2xl font-extrabold">Toda a Equipe</p>
-                <p className="text-xs opacity-80 mt-1">
-                  Veja todos os cortes e trabalhos postados pela bancada da ML Barber.
+              1. Início
+            </button>
+            <button
+              onClick={() => jumpToMoment(0.42)}
+              className={`px-3 sm:px-4 py-1.5 rounded-full text-[11px] font-bold uppercase tracking-wider transition-all ${
+                currentAct === 2 ? "bg-[#FAF8F5] text-[#181B19]" : "text-white/75 hover:text-white"
+              }`}
+            >
+              2. A Bancada
+            </button>
+            <button
+              onClick={() => jumpToMoment(0.92)}
+              className={`px-3 sm:px-4 py-1.5 rounded-full text-[11px] font-bold uppercase tracking-wider transition-all ${
+                currentAct === 3
+                  ? "bg-[#1F3D2B] text-[#FAF8F5] shadow-md"
+                  : "text-emerald-300 hover:text-white"
+              }`}
+            >
+              💈 3. Agendar
+            </button>
+          </nav>
+
+          <a
+            href="/admin"
+            className="hidden sm:inline-flex px-3.5 py-2 rounded-full bg-black/45 backdrop-blur-md text-[11px] font-semibold text-white/70 hover:text-white border border-white/10"
+          >
+            Admin
+          </a>
+        </header>
+
+        {/* =====================================================================
+            ATO 1 (Scroll 0% a 22%):
+            1. Nos primeiros scrolls (0% -> 13%), o nome e a logo abrem/sobem suavemente via GPU ref (zero lag).
+            2. Em seguida (11% -> 27%), a barbearia toda aparece limpa antes do timelapse para a bancada.
+           ===================================================================== */}
+        <div
+          ref={heroContainerRef}
+          className="absolute inset-0 z-20 flex flex-col items-center justify-center px-4 text-center will-change-transform"
+        >
+          {/* Selo Localização */}
+          <span className="px-4 py-1.5 rounded-full bg-[#1F3D2B]/90 backdrop-blur-md border border-emerald-400/30 text-[#FAF8F5] text-[10px] sm:text-xs font-bold uppercase tracking-[0.28em] mb-5 shadow-xl">
+            🌿 {shop.city} • {shop.experienceLabel}
+          </span>
+
+          {/* Logo Oficial no Centro */}
+          <div className="relative w-28 h-28 sm:w-36 sm:h-36 rounded-full bg-[#FAF8F5] p-1.5 shadow-[0_0_50px_rgba(0,0,0,0.6)] mb-4">
+            <img
+              src="/assets/logo-ml.webp"
+              alt="Logo ML Barber"
+              className="w-full h-full object-contain rounded-full"
+            />
+          </div>
+
+          {/* Nome Grande ML BARBER com Blur Sumindo Abaixo */}
+          <div className="relative">
+            <h1 className="font-serif font-black text-[16vw] sm:text-[11vw] leading-[0.88] tracking-tighter text-[#FAF8F5] title-blur-fade drop-shadow-2xl">
+              {shop.name}
+            </h1>
+            <div className="h-8 w-full -mt-6 backdrop-blur-[3px] pointer-events-none" />
+          </div>
+
+          <p className="text-sm sm:text-lg text-[#EFECE6] max-w-md font-medium mt-1 drop-shadow">
+            {shop.tagline}
+          </p>
+
+          {/* CTA Rápido ou Instrução de Scroll */}
+          <div className="mt-8 flex flex-col sm:flex-row items-center gap-3">
+            <button
+              onClick={() => jumpToMoment(0.92)}
+              className="px-7 py-3.5 rounded-full bg-[#FAF8F5] text-[#181B19] font-extrabold text-xs uppercase tracking-[0.2em] shadow-2xl hover:bg-[#1F3D2B] hover:text-white transition-colors"
+            >
+              💈 Ir Direto para Agendamento
+            </button>
+            <button
+              onClick={() => jumpToMoment(0.42)}
+              className="px-5 py-3 rounded-full bg-black/50 backdrop-blur-md border border-white/20 text-white text-xs font-semibold"
+            >
+              Role para entrar na barbearia ↓
+            </button>
+          </div>
+        </div>
+
+        {/* LEGENDA DISCRETA QUANDO O TÍTULO ABRE E MOSTRA A BARBEARIA INTEIRA (Scroll 11% a 26%) */}
+        <div
+          className={`absolute inset-x-0 bottom-8 z-20 flex justify-center px-4 pointer-events-none transition-all duration-500 ${
+            showWideShopBadge ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"
+          }`}
+        >
+          <div className="px-5 py-2.5 rounded-full bg-black/60 backdrop-blur-xl border border-white/20 text-[#FAF8F5] text-xs font-semibold tracking-wider shadow-2xl flex items-center gap-2.5">
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
+            <span>Ambiente ML Barber • Continue rolando para ir até a bancada ↓</span>
+          </div>
+        </div>
+
+        {/* =====================================================================
+            ATO 2 (Scroll 28% a 62%):
+            CÂMERA NAS FERRAMENTAS • INFORMAÇÕES, SEGUIDORES, CLIENTES E BARBEIROS
+           ===================================================================== */}
+        <div
+          className={`absolute inset-x-0 bottom-8 sm:bottom-12 z-20 max-w-6xl mx-auto px-4 sm:px-6 transition-all duration-500 ${
+            showWorkbenchCard
+              ? "opacity-100 translate-y-0 pointer-events-auto"
+              : "opacity-0 translate-y-12 pointer-events-none"
+          }`}
+        >
+          <div className="bg-[#FAF8F5]/95 backdrop-blur-2xl text-[#181B19] rounded-3xl p-5 sm:p-8 shadow-2xl border border-white/60">
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
+              {/* Texto sobre a Bancada & Equipamentos */}
+              <div className="space-y-2 max-w-xl">
+                <span className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#1F3D2B] text-[#FAF8F5] text-[10px] font-extrabold uppercase tracking-[0.22em]">
+                  ✂️ BANCADA DE ALTA PRECISÃO
+                </span>
+                <h2 className="font-serif text-2xl sm:text-4xl font-black leading-tight">
+                  Excelência em Cada Detalhe, Com {shop.followers} Seguidores
+                </h2>
+                <p className="text-xs sm:text-sm text-zinc-600 leading-relaxed">
+                  Liderada por <strong>Mateus Lopes</strong> ao lado de{" "}
+                  <strong>Alex Minuzzo</strong>, com equipamentos de ponta, visagismo e ambiente
+                  climatizado em Carlos Barbosa.
                 </p>
               </div>
-              <span className="text-xs font-bold underline">Mostrar todos ({posts.length} fotos)</span>
-            </button>
 
-            {activeBarbers.map((barber: any) => (
-              <div
-                key={barber.id}
-                onClick={() => setSelectedBarberId(barber.id)}
-                className={`cursor-pointer p-5 rounded-3xl border-2 transition-all flex flex-col justify-between ${
-                  selectedBarberId === barber.id
-                    ? "fern-botanical-bg text-white border-fern shadow-xl scale-[1.02]"
-                    : "bg-white border-sand-dark text-charcoal hover:border-fern"
-                }`}
-              >
-                <div className="flex items-center gap-3.5">
-                  <img
-                    src={barber.avatarUrl}
-                    alt={barber.name}
-                    className="w-14 h-14 rounded-2xl object-cover border-2 border-wood"
-                  />
-                  <div>
-                    {barber.isFounder && (
-                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-wood text-white font-bold uppercase">
-                        Fundador
-                      </span>
-                    )}
-                    <h3 className="font-display font-bold text-lg leading-tight mt-0.5">{barber.name}</h3>
-                    <p className="text-xs opacity-75">@{barber.instagram}</p>
-                  </div>
+              {/* Cards de Métricas Reais */}
+              <div className="grid grid-cols-3 gap-2.5 sm:gap-4 shrink-0">
+                <div className="bg-[#EFECE6] p-3.5 sm:p-4 rounded-2xl text-center border border-black/5">
+                  <p className="font-serif text-xl sm:text-3xl font-black text-[#1F3D2B]">
+                    {shop.followers}
+                  </p>
+                  <p className="text-[10px] uppercase tracking-wider font-bold text-zinc-500 mt-0.5">
+                    Seguidores
+                  </p>
                 </div>
-
-                <p className="text-xs opacity-85 my-4 line-clamp-2">{barber.bio}</p>
-
-                <div className="flex items-center justify-between pt-3 border-t border-current/10">
-                  <span className="text-[11px] font-bold">Ver Cortes de {barber.name.split(" ")[0]}</span>
-                  <a
-                    href={`/agenda?barber=${barber.id}`}
-                    onClick={(e) => e.stopPropagation()}
-                    className="px-3 py-1.5 rounded-xl bg-wood text-white text-[11px] font-bold hover:brightness-110"
-                  >
-                    Agendar
-                  </a>
+                <div className="bg-[#EFECE6] p-3.5 sm:p-4 rounded-2xl text-center border border-black/5">
+                  <p className="font-serif text-xl sm:text-3xl font-black text-[#181B19]">
+                    {shop.clientsServed}
+                  </p>
+                  <p className="text-[10px] uppercase tracking-wider font-bold text-zinc-500 mt-0.5">
+                    Clientes
+                  </p>
+                </div>
+                <div className="bg-[#EFECE6] p-3.5 sm:p-4 rounded-2xl text-center border border-black/5">
+                  <p className="font-serif text-xl sm:text-3xl font-black text-[#1F3D2B]">
+                    {activeBarbers.length}
+                  </p>
+                  <p className="text-[10px] uppercase tracking-wider font-bold text-zinc-500 mt-0.5">
+                    Barbeiros
+                  </p>
                 </div>
               </div>
-            ))}
-          </div>
-
-          {/* APRESENTAÇÃO DO BARBEIRO SELECIONADO */}
-          {selectedBarberObj && (
-            <div className="p-6 sm:p-8 rounded-3xl bg-sand border border-sand-dark flex flex-col md:flex-row items-center justify-between gap-6">
-              <div className="space-y-2">
-                <span className="text-xs font-bold uppercase text-fern">
-                  💈 Portfólio Individual • {selectedBarberObj.role}
-                </span>
-                <h3 className="font-display text-2xl sm:text-3xl font-extrabold">
-                  Trabalhos de {selectedBarberObj.name}
-                </h3>
-                <p className="text-sm text-charcoal/75 max-w-2xl">{selectedBarberObj.bio}</p>
-                <div className="flex flex-wrap gap-2 pt-2">
-                  {selectedBarberObj.specialties?.map((sp: string, i: number) => (
-                    <span
-                      key={i}
-                      className="px-3 py-1 rounded-full bg-alabaster border border-sand-dark text-xs font-semibold text-fern"
-                    >
-                      ✓ {sp}
-                    </span>
-                  ))}
-                </div>
-              </div>
-              <a
-                href={`/agenda?barber=${selectedBarberObj.id}`}
-                className="shrink-0 px-7 py-4 rounded-2xl bg-fern text-white font-bold text-xs uppercase tracking-wider shadow-lg"
-              >
-                Reservar Horário com {selectedBarberObj.name.split(" ")[0]} →
-              </a>
             </div>
-          )}
 
-          {/* GRADE DE FOTOS DE CORTES FILTRADA PELO BARBEIRO */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-7">
-            {filteredPosts.map((post: any) => {
-              const postBarber = barbers.find((b: any) => b.id === post.barberId);
-              return (
-                <article
-                  key={post.id}
-                  className="group rounded-3xl overflow-hidden bg-white border border-sand-dark hover:border-fern shadow-md transition-all"
-                >
-                  <div className="aspect-[4/5] overflow-hidden bg-sand relative">
+            {/* Pílulas Rápidas da Equipe (Clicar já seleciona o barbeiro e avança para a Cadeira!) */}
+            <div className="mt-5 pt-4 border-t border-black/10 flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2 overflow-x-auto no-scrollbar py-1">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-zinc-400 mr-1">
+                  Nossa Bancada:
+                </span>
+                {activeBarbers.map((b: any) => (
+                  <button
+                    key={b.id}
+                    onClick={() => {
+                      setSelectedBarberId(b.id);
+                      jumpToMoment(0.92);
+                    }}
+                    className="shrink-0 pl-1.5 pr-3.5 py-1.5 rounded-full bg-white hover:bg-[#1F3D2B] hover:text-white text-xs font-bold border border-black/10 transition-colors flex items-center gap-2"
+                  >
                     <img
-                      src={post.imageUrl}
-                      alt={post.title}
-                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+                      src={b.avatarUrl || "/assets/logo-ml.webp"}
+                      alt={b.name}
+                      className="w-6 h-6 rounded-full object-cover border border-black/10"
                     />
-                    <span className="absolute top-4 left-4 px-3 py-1 rounded-full bg-alabaster/90 backdrop-blur-md text-fern text-[11px] font-bold">
-                      {post.styleTag}
+                    <span>
+                      {b.name} ({b.chair}) →
                     </span>
-                  </div>
-                  <div className="p-5 flex items-center justify-between gap-4">
-                    <div>
-                      <h4 className="font-bold text-charcoal text-sm sm:text-base">{post.title}</h4>
-                      <p className="text-xs text-fern font-semibold mt-0.5">
-                        Profissional: {postBarber?.name || "Equipe ML Barber"}
-                      </p>
-                    </div>
-                    <a
-                      href={`/agenda?barber=${post.barberId}`}
-                      className="shrink-0 px-3.5 py-2 rounded-xl bg-sand hover:bg-fern hover:text-white text-charcoal text-xs font-bold transition-colors"
-                    >
-                      Agendar
-                    </a>
-                  </div>
-                </article>
-              );
-            })}
+                  </button>
+                ))}
+              </div>
+              <span className="text-[11px] font-bold text-[#1F3D2B] hidden sm:inline">
+                Continue rolando para sentar na cadeira ↓
+              </span>
+            </div>
           </div>
         </div>
-      </section>
 
-      {/* ATO 4: TABELA DE SERVIÇOS & VALORES */}
-      <section id="servicos" className="py-24 fern-botanical-bg text-white relative z-20">
-        <div className="max-w-5xl mx-auto px-4 sm:px-6 space-y-10">
-          <div className="text-center space-y-2">
-            <span className="text-xs uppercase tracking-[0.3em] text-emerald-300 font-bold">
-              💈 Transparência & Qualidade
-            </span>
-            <h2 className="font-display text-3xl sm:text-5xl font-extrabold">
-              SERVIÇOS & VALORES
-            </h2>
-          </div>
-
-          <div className="grid gap-4">
-            {services.map((srv: any) => (
-              <div
-                key={srv.id}
-                className="p-5 sm:p-6 rounded-2xl bg-white/10 backdrop-blur-md border border-white/15 flex flex-col sm:flex-row sm:items-center justify-between gap-4 hover:border-emerald-300/50 transition-all"
-              >
-                <div className="space-y-1">
-                  <div className="flex items-center gap-3">
-                    <h3 className="font-display font-bold text-lg text-white">{srv.name}</h3>
-                    <span className="text-xs px-2.5 py-0.5 rounded-full bg-white/15 text-emerald-200">
-                      ⏱️ {srv.durationMin} min
+        {/* =====================================================================
+            ATO 3 (Scroll 69% a 100%):
+            CADEIRA VIRADA PARA A CÂMERA • MENU PRÁTICO DE RESERVA DE HORÁRIO E CORTE
+           ===================================================================== */}
+        <div
+          className={`absolute inset-x-0 bottom-3 sm:bottom-6 z-30 max-w-6xl mx-auto px-3 sm:px-6 transition-all duration-500 ${
+            showBookingCard
+              ? "opacity-100 translate-y-0 pointer-events-auto"
+              : "opacity-0 translate-y-16 pointer-events-none"
+          }`}
+        >
+          {/* No Desktop fica posicionado à direita deixando a cadeira livre à esquerda;
+              No Mobile vira um Bottom Sheet compacto mostrando a cadeira virada no topo da tela! */}
+          <div className="lg:ml-auto lg:w-[540px] bg-[#FAF8F5]/95 backdrop-blur-2xl text-[#181B19] rounded-3xl p-4 sm:p-6 shadow-[0_25px_70px_rgba(0,0,0,0.75)] border-2 border-[#1F3D2B] max-h-[82dvh] overflow-y-auto">
+            {!bookingConfirmed ? (
+              <form onSubmit={handleConfirmBooking} className="space-y-4">
+                {/* Cabeçalho do Menu */}
+                <div className="flex items-center justify-between border-b border-black/10 pb-3">
+                  <div>
+                    <span className="text-[10px] font-extrabold uppercase tracking-[0.25em] text-[#1F3D2B]">
+                      💈 A CADEIRA ESTÁ PRONTA PARA VOCÊ
+                    </span>
+                    <h3 className="font-serif text-xl sm:text-2xl font-black leading-none mt-0.5">
+                      Agende Seu Horário
+                    </h3>
+                  </div>
+                  <div className="text-right">
+                    <span className="text-[10px] uppercase tracking-wider text-zinc-500 block">
+                      Valor Total
+                    </span>
+                    <span className="font-serif text-xl sm:text-2xl font-black text-[#1F3D2B]">
+                      R$ {currentService?.price}
                     </span>
                   </div>
-                  <p className="text-xs text-zinc-200">{srv.description}</p>
                 </div>
 
-                <div className="flex items-center justify-between sm:justify-end gap-5">
-                  <span className="font-display text-2xl font-extrabold text-amber-300">
-                    R$ {srv.price}
-                  </span>
-                  <a
-                    href={`/agenda?service=${srv.id}`}
-                    className="px-4 py-2.5 rounded-xl bg-alabaster text-fern font-bold text-xs uppercase hover:scale-105 transition-transform"
+                {/* PASSO 1: SELECIONAR BARBEIRO COM FOTO DE PERFIL TRATADA */}
+                <div>
+                  <label className="text-[11px] font-extrabold uppercase tracking-wider text-zinc-500 block mb-1.5">
+                    1. Escolha o Barbeiro ({activeBarbers.length} disponíveis)
+                  </label>
+                  <div
+                    className={`grid gap-2.5 ${
+                      activeBarbers.length >= 3 ? "grid-cols-3" : "grid-cols-2"
+                    }`}
                   >
-                    Reservar
+                    {activeBarbers.map((b: any) => {
+                      const active = selectedBarberId === b.id;
+                      return (
+                        <button
+                          type="button"
+                          key={b.id}
+                          onClick={() => setSelectedBarberId(b.id)}
+                          className={`p-2.5 sm:p-3 rounded-2xl text-left border transition-all flex items-center gap-3 ${
+                            active
+                              ? "bg-[#1F3D2B] text-[#FAF8F5] border-[#1F3D2B] shadow-lg ring-2 ring-[#1F3D2B]/30"
+                              : "bg-[#EFECE6]/85 text-[#181B19] border-black/10 hover:border-[#1F3D2B]"
+                          }`}
+                        >
+                          <div className="relative shrink-0">
+                            <img
+                              src={b.avatarUrl || "/assets/logo-ml.webp"}
+                              alt={b.name}
+                              className={`w-12 h-12 sm:w-14 sm:h-14 rounded-2xl object-cover border-2 transition-all ${
+                                active ? "border-emerald-300 shadow-md" : "border-white"
+                              }`}
+                            />
+                            <span
+                              className={`absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full border-2 ${
+                                active
+                                  ? "bg-emerald-400 border-[#1F3D2B]"
+                                  : "bg-emerald-500 border-[#EFECE6]"
+                              }`}
+                            />
+                          </div>
+                          <div className="min-w-0 flex-1">
+                            <p
+                              className={`text-[10px] uppercase font-extrabold tracking-wider ${
+                                active ? "text-emerald-300" : "text-[#1F3D2B]"
+                              }`}
+                            >
+                              {b.chair}
+                            </p>
+                            <p className="font-bold text-xs sm:text-sm truncate leading-tight mt-0.5">
+                              {b.name}
+                            </p>
+                            <p className="text-[10px] truncate opacity-80 mt-0.5">{b.role}</p>
+                          </div>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* PASSO 2: SELECIONAR CORTE / SERVIÇO */}
+                <div>
+                  <label className="text-[11px] font-extrabold uppercase tracking-wider text-zinc-500 block mb-1.5">
+                    2. Escolha o Corte ou Serviço
+                  </label>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    {services.map((srv: any) => {
+                      const active = selectedServiceId === srv.id;
+                      return (
+                        <button
+                          type="button"
+                          key={srv.id}
+                          onClick={() => setSelectedServiceId(srv.id)}
+                          className={`px-3 py-2.5 rounded-xl border text-left flex items-center justify-between transition-all ${
+                            active
+                              ? "bg-[#181B19] text-[#FAF8F5] border-[#181B19]"
+                              : "bg-white text-[#181B19] border-black/10 hover:border-[#1F3D2B]"
+                          }`}
+                        >
+                          <div className="pr-2">
+                            <p className="font-bold text-xs leading-tight">{srv.name}</p>
+                            <p className="text-[10px] opacity-70">{srv.duration}</p>
+                          </div>
+                          <span className="font-extrabold text-xs shrink-0">R$ {srv.price}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* PASSO 3: DIA E HORÁRIO */}
+                <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5 items-center">
+                  <div className="sm:col-span-5">
+                    <label className="text-[11px] font-extrabold uppercase tracking-wider text-zinc-500 block mb-1">
+                      3. Data
+                    </label>
+                    <input
+                      type="date"
+                      value={selectedDate}
+                      onChange={(e) => setSelectedDate(e.target.value)}
+                      className="w-full px-3 py-2 rounded-xl bg-white border border-black/15 text-xs font-bold"
+                    />
+                  </div>
+                  <div className="sm:col-span-7">
+                    <label className="text-[11px] font-extrabold uppercase tracking-wider text-zinc-500 block mb-1">
+                      Horário ({selectedTime})
+                    </label>
+                    <div className="flex gap-1.5 overflow-x-auto no-scrollbar pb-1">
+                      {timeSlots.map((slot: string) => (
+                        <button
+                          type="button"
+                          key={slot}
+                          onClick={() => setSelectedTime(slot)}
+                          className={`shrink-0 px-3 py-2 rounded-xl text-xs font-extrabold border transition-all ${
+                            selectedTime === slot
+                              ? "bg-[#1F3D2B] text-white border-[#1F3D2B]"
+                              : "bg-white text-[#181B19] border-black/10"
+                          }`}
+                        >
+                          {slot}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {/* PASSO 4: NOME, WHATSAPP E BOTÃO DE RESERVAR */}
+                <div className="grid grid-cols-2 gap-2 pt-1">
+                  <input
+                    required
+                    placeholder="Seu Nome"
+                    value={clientName}
+                    onChange={(e) => setClientName(e.target.value)}
+                    className="px-3.5 py-2.5 rounded-xl bg-white border border-black/15 text-xs font-semibold"
+                  />
+                  <input
+                    required
+                    placeholder="Seu WhatsApp"
+                    value={clientPhone}
+                    onChange={(e) => setClientPhone(e.target.value)}
+                    className="px-3.5 py-2.5 rounded-xl bg-white border border-black/15 text-xs font-semibold"
+                  />
+                </div>
+
+                <button
+                  type="submit"
+                  className="w-full py-3.5 rounded-2xl bg-[#1F3D2B] hover:bg-[#29523A] text-[#FAF8F5] font-extrabold text-xs uppercase tracking-[0.2em] shadow-xl transition-all"
+                >
+                  Confirmar Horário com {currentBarber?.name.split(" ")[0]} • R${" "}
+                  {currentService?.price}
+                </button>
+              </form>
+            ) : (
+              /* TELA DE SUCESSO PÓS-RESERVA */
+              <div className="text-center py-4 space-y-4">
+                <span className="inline-block px-3 py-1 rounded-full bg-emerald-100 text-[#1F3D2B] text-xs font-extrabold">
+                  ✅ CADEIRA RESERVADA • #{bookingConfirmed.id}
+                </span>
+                <h4 className="font-serif text-2xl font-black">
+                  Tudo pronto, {bookingConfirmed.clientName}!
+                </h4>
+                <p className="text-xs text-zinc-600">
+                  <strong>{bookingConfirmed.serviceName}</strong> com{" "}
+                  <strong>{bookingConfirmed.barberName}</strong> ({bookingConfirmed.chair}) no dia{" "}
+                  <strong>{bookingConfirmed.date}</strong> às{" "}
+                  <strong>{bookingConfirmed.time}</strong>.
+                </p>
+                <div className="flex flex-col sm:flex-row gap-2 pt-2">
+                  <a
+                    href={`https://wa.me/${shop.whatsapp}?text=${encodeURIComponent(
+                      `Olá! Fiz minha reserva pelo site da ML Barber (#${bookingConfirmed.id}):\n` +
+                        `💈 Barbeiro: ${bookingConfirmed.barberName}\n` +
+                        `✂️ Serviço: ${bookingConfirmed.serviceName} (R$ ${bookingConfirmed.price})\n` +
+                        `📅 Data/Hora: ${bookingConfirmed.date} às ${bookingConfirmed.time}\n` +
+                        `👤 Cliente: ${bookingConfirmed.clientName}`
+                    )}`}
+                    target="_blank"
+                    rel="noopener"
+                    className="flex-1 py-3.5 rounded-xl bg-[#1F3D2B] text-white text-xs font-extrabold uppercase tracking-wider"
+                  >
+                    Enviar Comprovante no WhatsApp ↗
                   </a>
+                  <button
+                    onClick={() => setBookingConfirmed(null)}
+                    className="px-4 py-3.5 rounded-xl bg-[#EFECE6] text-xs font-bold"
+                  >
+                    Nova Reserva
+                  </button>
                 </div>
               </div>
-            ))}
+            )}
           </div>
         </div>
-      </section>
 
-      {/* FOOTER */}
-      <footer className="py-12 bg-alabaster border-t border-sand-dark text-center text-xs text-charcoal/60 space-y-2">
-        <p className="font-display font-bold text-charcoal text-sm">
-          {barbershop.fullName} • {barbershop.city}
-        </p>
-        <p>Instagram Oficial: @{barbershop.instagram}</p>
-      </footer>
-
-      <BarberAssistantWidget data={data} />
-    </main>
+        {/* BARRA DE PROGRESSO DISCRETA NA BASE DA TELA */}
+        <div className="absolute bottom-0 inset-x-0 h-1 bg-white/15 z-40">
+          <div
+            ref={progressBarRef}
+            className="h-full bg-gradient-to-r from-[#1F3D2B] via-emerald-400 to-[#B08A57]"
+            style={{ width: "2%" }}
+          />
+        </div>
+      </div>
+    </div>
   );
 }
