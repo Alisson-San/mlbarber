@@ -40,16 +40,16 @@ const INITIAL_DATA = {
   ],
   services: [
     { id: "corte", name: "Corte Masculino / Fade", duration: "40 min", price: 50 },
-    { id: "combo", name: "Combo Corte + Barba Completa", duration: "60 min", price: 80 },
+    { id: "combo", name: "Combo Corte + Barba", duration: "60 min", price: 80 },
     { id: "barba", name: "Barboterapia Toalha Quente", duration: "30 min", price: 40 },
-    { id: "acabamento", name: "Pezinho + Sobrancelha na Navalha", duration: "20 min", price: 25 },
+    { id: "acabamento", name: "Pezinho + Sobrancelha", duration: "20 min", price: 25 },
   ],
   timeSlots: ["09:00", "10:00", "11:00", "14:00", "15:00", "16:00", "17:00", "18:00", "19:00"],
 };
 
 const TOTAL_VIDEO_FRAMES = 240;
 
-type UiStage = "hero" | "wide" | "workbench" | "booking";
+type UiStage = "hero" | "wide" | "workbench" | "chair" | "booking";
 
 export default function MLBarberVideoExperience() {
   const [data, setData] = useState<any>(INITIAL_DATA);
@@ -86,7 +86,7 @@ export default function MLBarberVideoExperience() {
       .catch(() => {});
   }, []);
 
-  // Motor Canvas 60fps/120fps com 240 Quadros Nativos (24fps), Sub-Frame Blending e ZERO Re-renders do React no Scroll
+  // Motor Canvas 60fps/120fps com 240 Quadros Nativos (24fps), Sub-Frame Blending e Enquadramento Inteligente Mobile/Desktop
   useEffect(() => {
     const wrapper = scrollWrapperRef.current;
     const canvas = canvasRef.current;
@@ -112,15 +112,18 @@ export default function MLBarberVideoExperience() {
     const playhead = { progress: 0 };
 
     // Função de suavização Hermite (evita trancos de velocidade ao entrar e sair dos Timelapses)
-    const smoothstep = (t: number) => t * t * (3 - 2 * t);
+    const smoothstep = (t: number) => {
+      const c = Math.max(0, Math.min(1, t));
+      return c * c * (3 - 2 * c);
+    };
 
     // Curva de Scroll Não-Linear para 240 quadros nativos (0 a 239):
     // • 0.00 -> 0.22: Abertura do nome + Visão limpa da barbearia inteira (Quadros 0 a 40)
     // • 0.22 -> 0.30: TIMELAPSE 1 — Acelera suavemente até a bancada (Quadros 40 a 107)
     // • 0.30 -> 0.60: Motion suave na bancada de ferramentas (Quadros 107 a 155)
     // • 0.60 -> 0.68: TIMELAPSE 2 — Acelera da bancada para a cadeira (Quadros 155 a 184)
-    // • 0.68 -> 0.88: Giro suave da cadeira de frente para a câmera (Quadros 184 a 239)
-    // • 0.88 -> 1.00: Cadeira posicionada + Menu de Agendamento (Quadro 239)
+    // • 0.68 -> 0.84: Giro suave da cadeira de frente para a câmera (Quadros 184 a 239)
+    // • 0.84 -> 1.00: Cadeira posicionada + Menu de Agendamento (Quadro 239)
     const mapProgressToExactFrame = (p: number): number => {
       const clamped = Math.max(0, Math.min(1, p));
       if (clamped <= 0.22) {
@@ -138,8 +141,8 @@ export default function MLBarberVideoExperience() {
         const t = smoothstep((clamped - 0.6) / 0.08);
         return 155 + t * (184 - 155);
       }
-      if (clamped <= 0.88) {
-        const t = (clamped - 0.68) / 0.2;
+      if (clamped <= 0.84) {
+        const t = (clamped - 0.68) / 0.16;
         return 184 + t * (239 - 184);
       }
       return 239;
@@ -157,8 +160,8 @@ export default function MLBarberVideoExperience() {
       return null;
     };
 
-    // Desenha o quadro com interpolação sub-frame (suaviza 24fps para 60fps+ nos movimentos lentos)
-    const renderFrame = (exactFrame: number) => {
+    // Desenha o quadro com interpolação sub-frame e câmera responsiva para Mobile (retrato) e Desktop (paisagem)
+    const renderFrame = (exactFrame: number, scrollProgress = playhead.progress) => {
       if (!ctx) return;
       const baseIdx = Math.max(0, Math.min(TOTAL_VIDEO_FRAMES - 1, Math.floor(exactFrame)));
       const nextIdx = Math.min(TOTAL_VIDEO_FRAMES - 1, baseIdx + 1);
@@ -179,10 +182,14 @@ export default function MLBarberVideoExperience() {
       ctx.imageSmoothingEnabled = true;
       ctx.imageSmoothingQuality = "high";
 
+      // Limpa o fundo do palco com o verde-escuro oficial da barbearia
+      ctx.fillStyle = "#0F1411";
+      ctx.fillRect(0, 0, cw, ch);
+
       const imgRatio = img.naturalWidth / img.naturalHeight;
       const canvasRatio = cw / ch;
 
-      // Suaviza o enquadramento pelos quadros reais da bancada (72..173 em 24fps), ocultando o reflexo superior
+      // Curva de foco na bancada (Quadros 72..173)
       let toolFocusBell = 0;
       if (exactFrame >= 72 && exactFrame < 105) {
         toolFocusBell = 0.5 - 0.5 * Math.cos(((exactFrame - 72) / 33) * Math.PI);
@@ -192,32 +199,69 @@ export default function MLBarberVideoExperience() {
         toolFocusBell = 0.5 + 0.5 * Math.cos(((exactFrame - 155) / 18) * Math.PI);
       }
 
-      const extraZoom = 1 + toolFocusBell * 0.22;
+      // Curva de foco na cadeira principal (Quadros 165..239)
+      const chairFocusBell = smoothstep((exactFrame - 165) / 28);
 
-      let baseW = cw;
-      let baseH = ch;
-      if (canvasRatio > imgRatio) {
-        baseH = cw / imgRatio;
-      } else {
-        baseW = ch * imgRatio;
-      }
+      // Curva de elevação no mobile quando o card de Agendamento sobe na metade inferior (scroll 0.78..0.85)
+      const bookingLift = smoothstep((scrollProgress - 0.78) / 0.07);
 
-      const drawW = baseW * extraZoom;
-      const drawH = baseH * extraZoom;
+      let drawW = cw;
+      let drawH = ch;
+      let offsetX = 0;
+      let offsetY = 0;
 
-      // Foco horizontal responsivo (no celular, foca na cadeira girando à esquerda no Ato 3)
-      let focalX = 0.5;
       if (canvasRatio < 1) {
-        if (exactFrame < 72) focalX = 0.48;
-        else if (exactFrame <= 173) focalX = 0.5;
-        else focalX = 0.37;
+        // =====================================================================
+        // MODO MOBILE RETRATO:
+        // Reposiciona o vídeo verticalmente e horizontalmente em cada Ato para que
+        // o assunto principal (Salão -> Ferramentas -> Cadeira) fique sempre visível
+        // na janela livre acima dos cards inferiores!
+        // =====================================================================
+        const mobileHeightFactor = 0.82 + toolFocusBell * 0.04 - chairFocusBell * 0.02;
+        drawH = Math.max(ch * mobileHeightFactor, cw / imgRatio);
+        drawW = drawH * imgRatio;
+
+        // Alvo horizontal na imagem (0.47 no salão, 0.49 nas ferramentas, 0.365 cravado no centro da Cadeira 01)
+        const targetImgX =
+          0.47 * (1 - toolFocusBell - chairFocusBell) +
+          0.49 * toolFocusBell +
+          0.365 * chairFocusBell;
+        offsetX = Math.max(cw - drawW, Math.min(0, 0.5 * cw - targetImgX * drawW));
+
+        // Alvo vertical na imagem:
+        // • Salão (Ato 1): centro do salão (imgY 0.52) -> meio da tela (screenY 0.46)
+        // • Bancada (Ato 2): máquinas/tesouras (imgY 0.68) -> janela superior acima do card (screenY 0.36), cortando o reflexo do cinegrafista
+        // • Giro da Cadeira (Ato 3a): cadeira girando (imgY 0.65) -> centro da tela limpa (screenY 0.48)
+        // • Reserva na Cadeira (Ato 3b): cadeira de frente (imgY 0.70) -> janela superior (screenY 0.29) logo acima do Bottom Sheet!
+        const baseImgY = 0.52 * (1 - toolFocusBell) + 0.68 * toolFocusBell;
+        const chairImgY = 0.65 * (1 - bookingLift) + 0.70 * bookingLift;
+        const targetImgY = baseImgY * (1 - chairFocusBell) + chairImgY * chairFocusBell;
+
+        const baseScreenY = 0.46 * (1 - toolFocusBell) + 0.36 * toolFocusBell;
+        const chairScreenY = 0.48 * (1 - bookingLift) + 0.29 * bookingLift;
+        const targetScreenY = baseScreenY * (1 - chairFocusBell) + chairScreenY * chairFocusBell;
+
+        offsetY = targetScreenY * ch - targetImgY * drawH;
+      } else {
+        // =====================================================================
+        // MODO DESKTOP / PAISAGEM:
+        // =====================================================================
+        const extraZoom = 1 + toolFocusBell * 0.22;
+        let baseW = cw;
+        let baseH = ch;
+        if (canvasRatio > imgRatio) {
+          baseH = cw / imgRatio;
+        } else {
+          baseW = ch * imgRatio;
+        }
+        drawW = baseW * extraZoom;
+        drawH = baseH * extraZoom;
+
+        const focalX = 0.5;
+        const focalY = 0.5 + toolFocusBell * 0.38;
+        offsetX = (cw - drawW) * focalX;
+        offsetY = (ch - drawH) * focalY;
       }
-
-      // Foco vertical (desce para 0.88 durante os quadros da bancada para destacar máquinas e tesouras)
-      const focalY = 0.5 + toolFocusBell * 0.38;
-
-      const offsetX = (cw - drawW) * focalX;
-      const offsetY = (ch - drawH) * focalY;
 
       ctx.globalAlpha = 1;
       ctx.drawImage(img, offsetX, offsetY, drawW, drawH);
@@ -228,25 +272,54 @@ export default function MLBarberVideoExperience() {
         ctx.drawImage(images[nextIdx]!, offsetX, offsetY, drawW, drawH);
         ctx.globalAlpha = 1;
       }
+
+      // No mobile, suaviza as bordas superior e inferior do quadro do vídeo para fundir com #0F1411 atrás dos cards
+      if (canvasRatio < 1) {
+        if (offsetY > 0) {
+          const topGrad = ctx.createLinearGradient(0, offsetY, 0, offsetY + ch * 0.12);
+          topGrad.addColorStop(0, "#0F1411");
+          topGrad.addColorStop(1, "rgba(15, 20, 17, 0)");
+          ctx.fillStyle = topGrad;
+          ctx.fillRect(0, 0, cw, offsetY + ch * 0.12);
+        }
+        const imgBottom = offsetY + drawH;
+        if (imgBottom < ch) {
+          const fadeStart = Math.max(0, imgBottom - ch * 0.14);
+          const botGrad = ctx.createLinearGradient(0, fadeStart, 0, imgBottom);
+          botGrad.addColorStop(0, "rgba(15, 20, 17, 0)");
+          botGrad.addColorStop(1, "#0F1411");
+          ctx.fillStyle = botGrad;
+          ctx.fillRect(0, fadeStart, cw, ch - fadeStart);
+        }
+      }
     };
 
     // Atualiza elementos contínuos direto na GPU via DOM ref (sem acionar re-render do React a cada frame!)
     const syncContinuousDOM = (p: number) => {
       if (heroContainerRef.current) {
-        const heroExit = Math.min(1, Math.max(0, p / 0.13));
+        const heroExit = Math.min(1, Math.max(0, p / 0.12));
         const opacity = Math.max(0, 1 - heroExit * 1.15);
         heroContainerRef.current.style.opacity = String(opacity);
-        heroContainerRef.current.style.transform = `translate3d(0, ${-heroExit * 68}px, 0) scale(${1 + heroExit * 0.05})`;
-        heroContainerRef.current.style.pointerEvents = heroExit < 0.92 ? "auto" : "none";
+        heroContainerRef.current.style.transform = `translate3d(0, ${-heroExit * 60}px, 0) scale(${1 + heroExit * 0.04})`;
+        heroContainerRef.current.style.pointerEvents = heroExit < 0.9 ? "auto" : "none";
       }
 
       if (progressBarRef.current) {
         progressBarRef.current.style.width = `${Math.max(2, p * 100)}%`;
       }
 
-      // Só aciona o React quando muda de cena (apenas 3 vezes em todo o scroll!)
+      // 5 estágios discretos: inclui o estágio "chair" (0.61 -> 0.82) para assistir ao giro da cadeira com a tela limpa!
       const nextStage: UiStage =
-        p < 0.11 ? "hero" : p < 0.27 ? "wide" : p < 0.65 ? "workbench" : "booking";
+        p < 0.11
+          ? "hero"
+          : p < 0.27
+          ? "wide"
+          : p < 0.61
+          ? "workbench"
+          : p < 0.82
+          ? "chair"
+          : "booking";
+
       if (nextStage !== stageRef.current) {
         stageRef.current = nextStage;
         setUiStage(nextStage);
@@ -256,13 +329,10 @@ export default function MLBarberVideoExperience() {
     // Carrega quadros em ordem de prioridade com decodificação assíncrona fora da thread principal (img.decode)
     let cancelled = false;
     const priorityOrder: number[] = [0];
-    // Passo 1: Keyframes espaçados a cada 6 quadros (garante cobertura imediata de todo o vídeo)
     for (let i = 5; i < TOTAL_VIDEO_FRAMES; i += 6) priorityOrder.push(i);
-    // Passo 2: Quadros pares intermediários
     for (let i = 2; i < TOTAL_VIDEO_FRAMES; i += 2) {
       if (!priorityOrder.includes(i)) priorityOrder.push(i);
     }
-    // Passo 3: Todos os quadros restantes para 24fps completos
     for (let i = 1; i < TOTAL_VIDEO_FRAMES; i++) {
       if (!priorityOrder.includes(i)) priorityOrder.push(i);
     }
@@ -275,7 +345,6 @@ export default function MLBarberVideoExperience() {
         img.src = `/assets/tour-frames/frame_${String(idx + 1).padStart(4, "0")}.webp?v=24fps`;
         img.onload = () => {
           if (cancelled) return resolve();
-          // Decodifica o bitmap em background antes de entregar ao canvas (evita engasgos no drawImage)
           img
             .decode()
             .catch(() => {})
@@ -285,7 +354,7 @@ export default function MLBarberVideoExperience() {
               loadedFlags[idx] = true;
               const currentExact = mapProgressToExactFrame(playhead.progress);
               if (idx === 0 || Math.abs(idx - currentExact) <= 4) {
-                renderFrame(currentExact);
+                renderFrame(currentExact, playhead.progress);
               }
               resolve();
             });
@@ -306,14 +375,13 @@ export default function MLBarberVideoExperience() {
       await Promise.all(workers);
     })();
 
-    // IMPORTANTE: onUpdate fica no Tween (e não no scrollTrigger) para rodar a 60fps/120fps durante toda a interpolação do scrub!
     const st = gsap.to(playhead, {
       progress: 1,
       ease: "none",
       onUpdate: () => {
         const p = playhead.progress;
         syncContinuousDOM(p);
-        renderFrame(mapProgressToExactFrame(p));
+        renderFrame(mapProgressToExactFrame(p), p);
       },
       scrollTrigger: {
         trigger: wrapper,
@@ -324,7 +392,7 @@ export default function MLBarberVideoExperience() {
     });
 
     const handleResize = () => {
-      renderFrame(mapProgressToExactFrame(playhead.progress));
+      renderFrame(mapProgressToExactFrame(playhead.progress), playhead.progress);
     };
     window.addEventListener("resize", handleResize);
 
@@ -382,64 +450,66 @@ export default function MLBarberVideoExperience() {
   const currentService =
     services.find((s: any) => s.id === selectedServiceId) || services[0];
 
-  const currentAct = uiStage === "hero" || uiStage === "wide" ? 1 : uiStage === "workbench" ? 2 : 3;
+  const currentAct =
+    uiStage === "hero" || uiStage === "wide" ? 1 : uiStage === "workbench" ? 2 : 3;
   const showWideShopBadge = uiStage === "wide";
   const showWorkbenchCard = uiStage === "workbench";
+  const showChairSpinBadge = uiStage === "chair";
   const showBookingCard = uiStage === "booking";
 
   return (
-    <div ref={scrollWrapperRef} className="relative h-[320vh] w-full select-none">
+    <div ref={scrollWrapperRef} className="relative h-[340vh] w-full select-none">
       {/* PALCO FIXO 100dvh ONDE O VÍDEO E OS ELEMENTOS ACONTECEM */}
-      <div
-        className="sticky top-0 h-[100dvh] w-full overflow-hidden bg-[#0F1411] bg-cover bg-center"
-        style={{ backgroundImage: "url('/assets/tour-frames/frame_0001.webp?v=24fps')" }}
-      >
+      <div className="sticky top-0 h-[100dvh] w-full overflow-hidden bg-[#0F1411]">
         {/* CAMADA 0: VÍDEO INTERATIVO NO CANVAS */}
         <canvas ref={canvasRef} className="absolute inset-0 w-full h-full block" />
 
-        {/* Vinheta Superior & Inferior (Mais transparente no meio para preservar 100% da nitidez e iluminação do vídeo) */}
+        {/* Vinheta Superior & Inferior calibrada para não escurecer o centro do vídeo */}
         <div
-          className={`absolute inset-0 pointer-events-none transition-opacity duration-500 bg-gradient-to-b from-black/45 via-transparent to-black/55 ${
-            showWideShopBadge ? "opacity-25" : "opacity-85"
+          className={`absolute inset-0 pointer-events-none transition-opacity duration-500 bg-gradient-to-b from-black/50 via-transparent to-black/60 ${
+            showWideShopBadge || showChairSpinBadge ? "opacity-25" : "opacity-80"
           }`}
         />
 
-        {/* BARRA DE NAVEGAÇÃO RÁPIDA NO TOPO (Pílula Prática Desktop & Mobile) */}
-        <header className="absolute top-4 sm:top-6 inset-x-0 z-40 max-w-6xl mx-auto px-3 sm:px-6 flex items-center justify-between gap-2">
+        {/* BARRA DE NAVEGAÇÃO RÁPIDA NO TOPO (Responsiva para telas estreitas de celular e Desktop) */}
+        <header className="absolute top-3 sm:top-6 inset-x-0 z-40 max-w-6xl mx-auto px-2.5 sm:px-6 flex items-center justify-between gap-1.5">
           <button
             onClick={() => jumpToMoment(0)}
-            className="flex items-center gap-2.5 bg-[#FAF8F5]/95 backdrop-blur-md text-[#181B19] px-3.5 py-2 rounded-full shadow-lg border border-white/40"
+            className="flex items-center gap-1.5 sm:gap-2.5 bg-[#FAF8F5]/95 backdrop-blur-md text-[#181B19] pl-1.5 pr-2.5 sm:px-3.5 py-1.5 sm:py-2 rounded-full shadow-lg border border-white/40 shrink-0"
           >
             <img
               src="/assets/logo-ml.webp"
               alt="ML Barber"
               onError={(e) => ((e.target as HTMLImageElement).style.display = "none")}
-              className="w-7 h-7 rounded-full object-cover"
+              className="w-6 h-6 sm:w-7 sm:h-7 rounded-full object-cover"
             />
-            <span className="font-serif font-black text-xs sm:text-sm tracking-wider">ML BARBER</span>
+            <span className="font-serif font-black text-[11px] sm:text-sm tracking-wider">
+              <span className="sm:hidden">ML</span>
+              <span className="hidden sm:inline">ML BARBER</span>
+            </span>
           </button>
 
           {/* Seletor Rápido dos 3 Momentos do Vídeo */}
-          <nav className="flex items-center gap-1 bg-black/55 backdrop-blur-xl p-1 rounded-full border border-white/15">
+          <nav className="flex items-center gap-0.5 sm:gap-1 bg-black/60 backdrop-blur-xl p-1 rounded-full border border-white/15">
             <button
               onClick={() => jumpToMoment(0)}
-              className={`px-3 sm:px-4 py-1.5 rounded-full text-[11px] font-bold uppercase tracking-wider transition-all ${
+              className={`px-2.5 sm:px-4 py-1 sm:py-1.5 rounded-full text-[10px] sm:text-[11px] font-bold uppercase tracking-wider transition-all ${
                 currentAct === 1 ? "bg-[#FAF8F5] text-[#181B19]" : "text-white/75 hover:text-white"
               }`}
             >
-              1. Início
+              1. Salão
             </button>
             <button
               onClick={() => jumpToMoment(0.42)}
-              className={`px-3 sm:px-4 py-1.5 rounded-full text-[11px] font-bold uppercase tracking-wider transition-all ${
+              className={`px-2.5 sm:px-4 py-1 sm:py-1.5 rounded-full text-[10px] sm:text-[11px] font-bold uppercase tracking-wider transition-all ${
                 currentAct === 2 ? "bg-[#FAF8F5] text-[#181B19]" : "text-white/75 hover:text-white"
               }`}
             >
-              2. A Bancada
+              2. Bancada
             </button>
             <button
               onClick={() => jumpToMoment(0.92)}
-              className={`px-3 sm:px-4 py-1.5 rounded-full text-[11px] font-bold uppercase tracking-wider transition-all ${
+              className={`px-2.5 sm:px-4 py-1 sm:py-1.5 rounded-full text-[10px] sm:text-[11px] font-bold uppercase tracking-wider transition-all ${
                 currentAct === 3
                   ? "bg-[#1F3D2B] text-[#FAF8F5] shadow-md"
                   : "text-emerald-300 hover:text-white"
@@ -459,20 +529,20 @@ export default function MLBarberVideoExperience() {
 
         {/* =====================================================================
             ATO 1 (Scroll 0% a 22%):
-            1. Nos primeiros scrolls (0% -> 13%), o nome e a logo abrem/sobem suavemente via GPU ref (zero lag).
+            1. Nos primeiros scrolls (0% -> 12%), o nome e a logo sobem suavemente.
             2. Em seguida (11% -> 27%), a barbearia toda aparece limpa antes do timelapse para a bancada.
            ===================================================================== */}
         <div
           ref={heroContainerRef}
-          className="absolute inset-0 z-20 flex flex-col items-center justify-center px-4 text-center will-change-transform"
+          className="absolute inset-0 z-20 flex flex-col items-center justify-center px-4 pt-8 sm:pt-0 text-center will-change-transform"
         >
           {/* Selo Localização */}
-          <span className="px-4 py-1.5 rounded-full bg-[#1F3D2B]/90 backdrop-blur-md border border-emerald-400/30 text-[#FAF8F5] text-[10px] sm:text-xs font-bold uppercase tracking-[0.28em] mb-5 shadow-xl">
+          <span className="px-3.5 py-1 sm:px-4 sm:py-1.5 rounded-full bg-[#1F3D2B]/90 backdrop-blur-md border border-emerald-400/30 text-[#FAF8F5] text-[9px] sm:text-xs font-bold uppercase tracking-[0.22em] sm:tracking-[0.28em] mb-3 sm:mb-5 shadow-xl">
             🌿 {shop.city} • {shop.experienceLabel}
           </span>
 
           {/* Logo Oficial no Centro */}
-          <div className="relative w-28 h-28 sm:w-36 sm:h-36 rounded-full bg-[#FAF8F5] p-1.5 shadow-[0_0_50px_rgba(0,0,0,0.6)] mb-4">
+          <div className="relative w-20 h-20 sm:w-36 sm:h-36 rounded-full bg-[#FAF8F5] p-1 sm:p-1.5 shadow-[0_0_50px_rgba(0,0,0,0.6)] mb-3 sm:mb-4">
             <img
               src="/assets/logo-ml.webp"
               alt="Logo ML Barber"
@@ -482,106 +552,112 @@ export default function MLBarberVideoExperience() {
 
           {/* Nome Grande ML BARBER com Blur Sumindo Abaixo */}
           <div className="relative">
-            <h1 className="font-serif font-black text-[16vw] sm:text-[11vw] leading-[0.88] tracking-tighter text-[#FAF8F5] title-blur-fade drop-shadow-2xl">
+            <h1 className="font-serif font-black text-[13.5vw] sm:text-[11vw] leading-[0.88] tracking-tighter text-[#FAF8F5] title-blur-fade drop-shadow-2xl">
               {shop.name}
             </h1>
-            <div className="h-8 w-full -mt-6 backdrop-blur-[3px] pointer-events-none" />
+            <div className="h-5 sm:h-8 w-full -mt-4 sm:-mt-6 backdrop-blur-[3px] pointer-events-none" />
           </div>
 
-          <p className="text-sm sm:text-lg text-[#EFECE6] max-w-md font-medium mt-1 drop-shadow">
+          <p className="text-xs sm:text-lg text-[#EFECE6] max-w-xs sm:max-w-md font-medium mt-1 drop-shadow">
             {shop.tagline}
           </p>
 
           {/* CTA Rápido ou Instrução de Scroll */}
-          <div className="mt-8 flex flex-col sm:flex-row items-center gap-3">
+          <div className="mt-5 sm:mt-8 flex flex-col sm:flex-row items-center gap-2.5 sm:gap-3 w-full max-w-[260px] sm:max-w-none">
             <button
               onClick={() => jumpToMoment(0.92)}
-              className="px-7 py-3.5 rounded-full bg-[#FAF8F5] text-[#181B19] font-extrabold text-xs uppercase tracking-[0.2em] shadow-2xl hover:bg-[#1F3D2B] hover:text-white transition-colors"
+              className="w-full sm:w-auto px-5 sm:px-7 py-3 sm:py-3.5 rounded-full bg-[#FAF8F5] text-[#181B19] font-extrabold text-[11px] sm:text-xs uppercase tracking-[0.18em] shadow-2xl hover:bg-[#1F3D2B] hover:text-white transition-colors"
             >
-              💈 Ir Direto para Agendamento
+              💈 Agendar Horário
             </button>
             <button
               onClick={() => jumpToMoment(0.42)}
-              className="px-5 py-3 rounded-full bg-black/50 backdrop-blur-md border border-white/20 text-white text-xs font-semibold"
+              className="w-full sm:w-auto px-4 sm:px-5 py-2.5 sm:py-3 rounded-full bg-black/55 backdrop-blur-md border border-white/20 text-white text-[11px] sm:text-xs font-semibold"
             >
               Role para entrar na barbearia ↓
             </button>
           </div>
         </div>
 
-        {/* LEGENDA DISCRETA QUANDO O TÍTULO ABRE E MOSTRA A BARBEARIA INTEIRA (Scroll 11% a 26%) */}
+        {/* LEGENDA DISCRETA QUANDO O TÍTULO ABRE E MOSTRA A BARBEARIA INTEIRA (Scroll 11% a 27%) */}
         <div
-          className={`absolute inset-x-0 bottom-8 z-20 flex justify-center px-4 pointer-events-none transition-all duration-500 ${
+          className={`absolute inset-x-0 bottom-5 sm:bottom-8 z-20 flex justify-center px-3 pointer-events-none transition-all duration-500 ${
             showWideShopBadge ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"
           }`}
         >
-          <div className="px-5 py-2.5 rounded-full bg-black/60 backdrop-blur-xl border border-white/20 text-[#FAF8F5] text-xs font-semibold tracking-wider shadow-2xl flex items-center gap-2.5">
-            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-            <span>Ambiente ML Barber • Continue rolando para ir até a bancada ↓</span>
+          <div className="px-4 sm:px-5 py-2 sm:py-2.5 rounded-full bg-black/65 backdrop-blur-xl border border-white/20 text-[#FAF8F5] text-[11px] sm:text-xs font-semibold tracking-wide shadow-2xl flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse shrink-0" />
+            <span>Salão ML Barber • Continue rolando até a bancada ↓</span>
           </div>
         </div>
 
         {/* =====================================================================
-            ATO 2 (Scroll 28% a 62%):
-            CÂMERA NAS FERRAMENTAS • INFORMAÇÕES, SEGUIDORES, CLIENTES E BARBEIROS
+            ATO 2 (Scroll 27% a 61%):
+            CÂMERA NAS FERRAMENTAS • No mobile as ferramentas ficam enquadradas na metade superior
+            e este card compacto ocupa apenas o terço inferior!
            ===================================================================== */}
         <div
-          className={`absolute inset-x-0 bottom-8 sm:bottom-12 z-20 max-w-6xl mx-auto px-4 sm:px-6 transition-all duration-500 ${
+          className={`absolute inset-x-0 bottom-3 sm:bottom-10 z-20 max-w-6xl mx-auto px-3 sm:px-6 transition-all duration-500 ${
             showWorkbenchCard
               ? "opacity-100 translate-y-0 pointer-events-auto"
               : "opacity-0 translate-y-12 pointer-events-none"
           }`}
         >
-          <div className="bg-[#FAF8F5]/95 backdrop-blur-2xl text-[#181B19] rounded-3xl p-5 sm:p-8 shadow-2xl border border-white/60">
-            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
+          <div className="bg-[#FAF8F5]/95 backdrop-blur-2xl text-[#181B19] rounded-2xl sm:rounded-3xl p-3.5 sm:p-7 shadow-2xl border border-white/60">
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 sm:gap-6">
               {/* Texto sobre a Bancada & Equipamentos */}
-              <div className="space-y-2 max-w-xl">
-                <span className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#1F3D2B] text-[#FAF8F5] text-[10px] font-extrabold uppercase tracking-[0.22em]">
-                  ✂️ BANCADA DE ALTA PRECISÃO
-                </span>
-                <h2 className="font-serif text-2xl sm:text-4xl font-black leading-tight">
+              <div className="space-y-1 sm:space-y-2 max-w-xl">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 sm:px-3 sm:py-1 rounded-full bg-[#1F3D2B] text-[#FAF8F5] text-[9px] sm:text-[10px] font-extrabold uppercase tracking-[0.18em] sm:tracking-[0.22em]">
+                    ✂️ BANCADA DE ALTA PRECISÃO
+                  </span>
+                  <span className="text-[10px] font-bold text-[#1F3D2B] sm:hidden">
+                    Role p/ a cadeira ↓
+                  </span>
+                </div>
+                <h2 className="font-serif text-lg sm:text-4xl font-black leading-tight">
                   Excelência em Cada Detalhe, Com {shop.followers} Seguidores
                 </h2>
-                <p className="text-xs sm:text-sm text-zinc-600 leading-relaxed">
+                <p className="text-[11px] sm:text-sm text-zinc-600 leading-snug sm:leading-relaxed">
                   Liderada por <strong>Mateus Lopes</strong> ao lado de{" "}
-                  <strong>Alex Minuzzo</strong>, com equipamentos de ponta, visagismo e ambiente
-                  climatizado em Carlos Barbosa.
+                  <strong>Alex Minuzzo</strong>, com equipamentos de ponta e visagismo em Carlos
+                  Barbosa.
                 </p>
               </div>
 
-              {/* Cards de Métricas Reais */}
-              <div className="grid grid-cols-3 gap-2.5 sm:gap-4 shrink-0">
-                <div className="bg-[#EFECE6] p-3.5 sm:p-4 rounded-2xl text-center border border-black/5">
-                  <p className="font-serif text-xl sm:text-3xl font-black text-[#1F3D2B]">
+              {/* Cards de Métricas Reais (Mais compactos no celular para deixar as ferramentas visíveis acima) */}
+              <div className="grid grid-cols-3 gap-2 sm:gap-4 shrink-0">
+                <div className="bg-[#EFECE6] py-2 px-2.5 sm:p-4 rounded-xl sm:rounded-2xl text-center border border-black/5">
+                  <p className="font-serif text-base sm:text-3xl font-black text-[#1F3D2B] leading-none">
                     {shop.followers}
                   </p>
-                  <p className="text-[10px] uppercase tracking-wider font-bold text-zinc-500 mt-0.5">
+                  <p className="text-[9px] sm:text-[10px] uppercase tracking-wider font-bold text-zinc-500 mt-1">
                     Seguidores
                   </p>
                 </div>
-                <div className="bg-[#EFECE6] p-3.5 sm:p-4 rounded-2xl text-center border border-black/5">
-                  <p className="font-serif text-xl sm:text-3xl font-black text-[#181B19]">
+                <div className="bg-[#EFECE6] py-2 px-2.5 sm:p-4 rounded-xl sm:rounded-2xl text-center border border-black/5">
+                  <p className="font-serif text-base sm:text-3xl font-black text-[#181B19] leading-none">
                     {shop.clientsServed}
                   </p>
-                  <p className="text-[10px] uppercase tracking-wider font-bold text-zinc-500 mt-0.5">
+                  <p className="text-[9px] sm:text-[10px] uppercase tracking-wider font-bold text-zinc-500 mt-1">
                     Clientes
                   </p>
                 </div>
-                <div className="bg-[#EFECE6] p-3.5 sm:p-4 rounded-2xl text-center border border-black/5">
-                  <p className="font-serif text-xl sm:text-3xl font-black text-[#1F3D2B]">
+                <div className="bg-[#EFECE6] py-2 px-2.5 sm:p-4 rounded-xl sm:rounded-2xl text-center border border-black/5">
+                  <p className="font-serif text-base sm:text-3xl font-black text-[#1F3D2B] leading-none">
                     {activeBarbers.length}
                   </p>
-                  <p className="text-[10px] uppercase tracking-wider font-bold text-zinc-500 mt-0.5">
+                  <p className="text-[9px] sm:text-[10px] uppercase tracking-wider font-bold text-zinc-500 mt-1">
                     Barbeiros
                   </p>
                 </div>
               </div>
             </div>
 
-            {/* Pílulas Rápidas da Equipe (Clicar já seleciona o barbeiro e avança para a Cadeira!) */}
-            <div className="mt-5 pt-4 border-t border-black/10 flex flex-wrap items-center justify-between gap-3">
-              <div className="flex items-center gap-2 overflow-x-auto no-scrollbar py-1">
-                <span className="text-[11px] font-bold uppercase tracking-wider text-zinc-400 mr-1">
+            {/* Pílulas Rápidas da Equipe (Grade de 2 colunas no celular para caber sem cortar) */}
+            <div className="mt-3 sm:mt-5 pt-2.5 sm:pt-4 border-t border-black/10 flex flex-col sm:flex-row sm:items-center justify-between gap-2 sm:gap-3">
+              <div className="grid grid-cols-2 sm:flex sm:items-center gap-2">
+                <span className="hidden sm:inline text-[11px] font-bold uppercase tracking-wider text-zinc-400 mr-1">
                   Nossa Bancada:
                 </span>
                 {activeBarbers.map((b: any) => (
@@ -591,15 +667,15 @@ export default function MLBarberVideoExperience() {
                       setSelectedBarberId(b.id);
                       jumpToMoment(0.92);
                     }}
-                    className="shrink-0 pl-1.5 pr-3.5 py-1.5 rounded-full bg-white hover:bg-[#1F3D2B] hover:text-white text-xs font-bold border border-black/10 transition-colors flex items-center gap-2"
+                    className="p-1.5 sm:pl-1.5 sm:pr-3.5 sm:py-1.5 rounded-full bg-white hover:bg-[#1F3D2B] hover:text-white text-[11px] sm:text-xs font-bold border border-black/10 transition-colors flex items-center gap-2 min-w-0"
                   >
                     <img
                       src={b.avatarUrl || "/assets/logo-ml.webp"}
                       alt={b.name}
-                      className="w-6 h-6 rounded-full object-cover border border-black/10"
+                      className="w-6 h-6 rounded-full object-cover border border-black/10 shrink-0"
                     />
-                    <span>
-                      {b.name} ({b.chair}) →
+                    <span className="truncate">
+                      {b.name.split(" ")[0]} ({b.chair}) →
                     </span>
                   </button>
                 ))}
@@ -612,36 +688,50 @@ export default function MLBarberVideoExperience() {
         </div>
 
         {/* =====================================================================
-            ATO 3 (Scroll 69% a 100%):
-            CADEIRA VIRADA PARA A CÂMERA • MENU PRÁTICO DE RESERVA DE HORÁRIO E CORTE
+            ATO 3A (Scroll 61% a 82%):
+            GIRO DA CADEIRA COM TELA LIMPA (Permite ver a poltrona girando de frente no celular!)
            ===================================================================== */}
         <div
-          className={`absolute inset-x-0 bottom-3 sm:bottom-6 z-30 max-w-6xl mx-auto px-3 sm:px-6 transition-all duration-500 ${
+          className={`absolute inset-x-0 bottom-5 sm:bottom-8 z-20 flex justify-center px-3 pointer-events-none transition-all duration-500 ${
+            showChairSpinBadge ? "opacity-100 translate-y-0" : "opacity-0 translate-y-4"
+          }`}
+        >
+          <div className="px-4 sm:px-5 py-2 sm:py-2.5 rounded-full bg-black/65 backdrop-blur-xl border border-emerald-400/30 text-[#FAF8F5] text-[11px] sm:text-xs font-semibold tracking-wide shadow-2xl flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping shrink-0" />
+            <span>Preparando sua cadeira • Continue rolando para agendar ↓</span>
+          </div>
+        </div>
+
+        {/* =====================================================================
+            ATO 3B (Scroll 82% a 100%):
+            CADEIRA VIRADA PARA A CÂMERA (Enquadrada na metade superior no celular)
+            + MENU COMPACTO DE RESERVA NA METADE INFERIOR (max-h-[54dvh] no mobile)
+           ===================================================================== */}
+        <div
+          className={`absolute inset-x-0 bottom-2 sm:bottom-6 z-30 max-w-6xl mx-auto px-2.5 sm:px-6 transition-all duration-500 ${
             showBookingCard
               ? "opacity-100 translate-y-0 pointer-events-auto"
               : "opacity-0 translate-y-16 pointer-events-none"
           }`}
         >
-          {/* No Desktop fica posicionado à direita deixando a cadeira livre à esquerda;
-              No Mobile vira um Bottom Sheet compacto mostrando a cadeira virada no topo da tela! */}
-          <div className="lg:ml-auto lg:w-[540px] bg-[#FAF8F5]/95 backdrop-blur-2xl text-[#181B19] rounded-3xl p-4 sm:p-6 shadow-[0_25px_70px_rgba(0,0,0,0.75)] border-2 border-[#1F3D2B] max-h-[82dvh] overflow-y-auto">
+          <div className="lg:ml-auto lg:w-[540px] bg-[#FAF8F5]/95 backdrop-blur-2xl text-[#181B19] rounded-2xl sm:rounded-3xl p-3.5 sm:p-6 shadow-[0_25px_70px_rgba(0,0,0,0.8)] border-2 border-[#1F3D2B] max-h-[55dvh] sm:max-h-[84dvh] overflow-y-auto no-scrollbar">
             {!bookingConfirmed ? (
-              <form onSubmit={handleConfirmBooking} className="space-y-4">
+              <form onSubmit={handleConfirmBooking} className="space-y-2.5 sm:space-y-4">
                 {/* Cabeçalho do Menu */}
-                <div className="flex items-center justify-between border-b border-black/10 pb-3">
+                <div className="flex items-center justify-between border-b border-black/10 pb-2 sm:pb-3">
                   <div>
-                    <span className="text-[10px] font-extrabold uppercase tracking-[0.25em] text-[#1F3D2B]">
+                    <span className="text-[9px] sm:text-[10px] font-extrabold uppercase tracking-[0.2em] sm:tracking-[0.25em] text-[#1F3D2B] block">
                       💈 A CADEIRA ESTÁ PRONTA PARA VOCÊ
                     </span>
-                    <h3 className="font-serif text-xl sm:text-2xl font-black leading-none mt-0.5">
+                    <h3 className="font-serif text-lg sm:text-2xl font-black leading-none mt-0.5">
                       Agende Seu Horário
                     </h3>
                   </div>
-                  <div className="text-right">
-                    <span className="text-[10px] uppercase tracking-wider text-zinc-500 block">
+                  <div className="text-right shrink-0">
+                    <span className="text-[9px] sm:text-[10px] uppercase tracking-wider text-zinc-500 block">
                       Valor Total
                     </span>
-                    <span className="font-serif text-xl sm:text-2xl font-black text-[#1F3D2B]">
+                    <span className="font-serif text-lg sm:text-2xl font-black text-[#1F3D2B]">
                       R$ {currentService?.price}
                     </span>
                   </div>
@@ -649,11 +739,11 @@ export default function MLBarberVideoExperience() {
 
                 {/* PASSO 1: SELECIONAR BARBEIRO COM FOTO DE PERFIL TRATADA */}
                 <div>
-                  <label className="text-[11px] font-extrabold uppercase tracking-wider text-zinc-500 block mb-1.5">
-                    1. Escolha o Barbeiro ({activeBarbers.length} disponíveis)
+                  <label className="text-[10px] sm:text-[11px] font-extrabold uppercase tracking-wider text-zinc-500 block mb-1 sm:mb-1.5">
+                    1. Escolha o Barbeiro
                   </label>
                   <div
-                    className={`grid gap-2.5 ${
+                    className={`grid gap-2 sm:gap-2.5 ${
                       activeBarbers.length >= 3 ? "grid-cols-3" : "grid-cols-2"
                     }`}
                   >
@@ -664,9 +754,9 @@ export default function MLBarberVideoExperience() {
                           type="button"
                           key={b.id}
                           onClick={() => setSelectedBarberId(b.id)}
-                          className={`p-2.5 sm:p-3 rounded-2xl text-left border transition-all flex items-center gap-3 ${
+                          className={`p-2 sm:p-3 rounded-xl sm:rounded-2xl text-left border transition-all flex items-center gap-2 sm:gap-3 ${
                             active
-                              ? "bg-[#1F3D2B] text-[#FAF8F5] border-[#1F3D2B] shadow-lg ring-2 ring-[#1F3D2B]/30"
+                              ? "bg-[#1F3D2B] text-[#FAF8F5] border-[#1F3D2B] shadow-md ring-2 ring-[#1F3D2B]/30"
                               : "bg-[#EFECE6]/85 text-[#181B19] border-black/10 hover:border-[#1F3D2B]"
                           }`}
                         >
@@ -674,12 +764,12 @@ export default function MLBarberVideoExperience() {
                             <img
                               src={b.avatarUrl || "/assets/logo-ml.webp"}
                               alt={b.name}
-                              className={`w-12 h-12 sm:w-14 sm:h-14 rounded-2xl object-cover border-2 transition-all ${
-                                active ? "border-emerald-300 shadow-md" : "border-white"
+                              className={`w-10 h-10 sm:w-14 sm:h-14 rounded-xl sm:rounded-2xl object-cover border-2 transition-all ${
+                                active ? "border-emerald-300 shadow-sm" : "border-white"
                               }`}
                             />
                             <span
-                              className={`absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full border-2 ${
+                              className={`absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 sm:w-3.5 sm:h-3.5 rounded-full border-2 ${
                                 active
                                   ? "bg-emerald-400 border-[#1F3D2B]"
                                   : "bg-emerald-500 border-[#EFECE6]"
@@ -688,7 +778,7 @@ export default function MLBarberVideoExperience() {
                           </div>
                           <div className="min-w-0 flex-1">
                             <p
-                              className={`text-[10px] uppercase font-extrabold tracking-wider ${
+                              className={`text-[9px] sm:text-[10px] uppercase font-extrabold tracking-wider leading-none ${
                                 active ? "text-emerald-300" : "text-[#1F3D2B]"
                               }`}
                             >
@@ -697,7 +787,9 @@ export default function MLBarberVideoExperience() {
                             <p className="font-bold text-xs sm:text-sm truncate leading-tight mt-0.5">
                               {b.name}
                             </p>
-                            <p className="text-[10px] truncate opacity-80 mt-0.5">{b.role}</p>
+                            <p className="text-[9px] sm:text-[10px] truncate opacity-80 hidden sm:block mt-0.5">
+                              {b.role}
+                            </p>
                           </div>
                         </button>
                       );
@@ -705,12 +797,12 @@ export default function MLBarberVideoExperience() {
                   </div>
                 </div>
 
-                {/* PASSO 2: SELECIONAR CORTE / SERVIÇO */}
+                {/* PASSO 2: SELECIONAR CORTE / SERVIÇO (Grade 2x2 também no mobile para economizar altura!) */}
                 <div>
-                  <label className="text-[11px] font-extrabold uppercase tracking-wider text-zinc-500 block mb-1.5">
-                    2. Escolha o Corte ou Serviço
+                  <label className="text-[10px] sm:text-[11px] font-extrabold uppercase tracking-wider text-zinc-500 block mb-1 sm:mb-1.5">
+                    2. Escolha o Serviço
                   </label>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <div className="grid grid-cols-2 gap-1.5 sm:gap-2">
                     {services.map((srv: any) => {
                       const active = selectedServiceId === srv.id;
                       return (
@@ -718,47 +810,51 @@ export default function MLBarberVideoExperience() {
                           type="button"
                           key={srv.id}
                           onClick={() => setSelectedServiceId(srv.id)}
-                          className={`px-3 py-2.5 rounded-xl border text-left flex items-center justify-between transition-all ${
+                          className={`px-2.5 py-2 sm:px-3 sm:py-2.5 rounded-xl border text-left flex items-center justify-between gap-1 transition-all ${
                             active
                               ? "bg-[#181B19] text-[#FAF8F5] border-[#181B19]"
                               : "bg-white text-[#181B19] border-black/10 hover:border-[#1F3D2B]"
                           }`}
                         >
-                          <div className="pr-2">
-                            <p className="font-bold text-xs leading-tight">{srv.name}</p>
-                            <p className="text-[10px] opacity-70">{srv.duration}</p>
+                          <div className="min-w-0">
+                            <p className="font-bold text-[11px] sm:text-xs truncate leading-tight">
+                              {srv.name}
+                            </p>
+                            <p className="text-[9px] sm:text-[10px] opacity-70">{srv.duration}</p>
                           </div>
-                          <span className="font-extrabold text-xs shrink-0">R$ {srv.price}</span>
+                          <span className="font-extrabold text-[11px] sm:text-xs shrink-0">
+                            R${srv.price}
+                          </span>
                         </button>
                       );
                     })}
                   </div>
                 </div>
 
-                {/* PASSO 3: DIA E HORÁRIO */}
-                <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5 items-center">
-                  <div className="sm:col-span-5">
-                    <label className="text-[11px] font-extrabold uppercase tracking-wider text-zinc-500 block mb-1">
+                {/* PASSO 3: DIA E HORÁRIO LADO A LADO NO MOBILE E DESKTOP */}
+                <div className="grid grid-cols-12 gap-2 items-center">
+                  <div className="col-span-5">
+                    <label className="text-[10px] sm:text-[11px] font-extrabold uppercase tracking-wider text-zinc-500 block mb-1">
                       3. Data
                     </label>
                     <input
                       type="date"
                       value={selectedDate}
                       onChange={(e) => setSelectedDate(e.target.value)}
-                      className="w-full px-3 py-2 rounded-xl bg-white border border-black/15 text-xs font-bold"
+                      className="w-full px-2 sm:px-3 py-1.5 sm:py-2 rounded-xl bg-white border border-black/15 text-[11px] sm:text-xs font-bold"
                     />
                   </div>
-                  <div className="sm:col-span-7">
-                    <label className="text-[11px] font-extrabold uppercase tracking-wider text-zinc-500 block mb-1">
+                  <div className="col-span-7">
+                    <label className="text-[10px] sm:text-[11px] font-extrabold uppercase tracking-wider text-zinc-500 block mb-1">
                       Horário ({selectedTime})
                     </label>
-                    <div className="flex gap-1.5 overflow-x-auto no-scrollbar pb-1">
+                    <div className="flex gap-1.5 overflow-x-auto no-scrollbar pb-0.5">
                       {timeSlots.map((slot: string) => (
                         <button
                           type="button"
                           key={slot}
                           onClick={() => setSelectedTime(slot)}
-                          className={`shrink-0 px-3 py-2 rounded-xl text-xs font-extrabold border transition-all ${
+                          className={`shrink-0 px-2.5 sm:px-3 py-1.5 sm:py-2 rounded-xl text-[11px] sm:text-xs font-extrabold border transition-all ${
                             selectedTime === slot
                               ? "bg-[#1F3D2B] text-white border-[#1F3D2B]"
                               : "bg-white text-[#181B19] border-black/10"
@@ -772,38 +868,37 @@ export default function MLBarberVideoExperience() {
                 </div>
 
                 {/* PASSO 4: NOME, WHATSAPP E BOTÃO DE RESERVAR */}
-                <div className="grid grid-cols-2 gap-2 pt-1">
+                <div className="grid grid-cols-2 gap-2">
                   <input
                     required
                     placeholder="Seu Nome"
                     value={clientName}
                     onChange={(e) => setClientName(e.target.value)}
-                    className="px-3.5 py-2.5 rounded-xl bg-white border border-black/15 text-xs font-semibold"
+                    className="px-3 py-2 sm:px-3.5 sm:py-2.5 rounded-xl bg-white border border-black/15 text-xs font-semibold"
                   />
                   <input
                     required
                     placeholder="Seu WhatsApp"
                     value={clientPhone}
                     onChange={(e) => setClientPhone(e.target.value)}
-                    className="px-3.5 py-2.5 rounded-xl bg-white border border-black/15 text-xs font-semibold"
+                    className="px-3 py-2 sm:px-3.5 sm:py-2.5 rounded-xl bg-white border border-black/15 text-xs font-semibold"
                   />
                 </div>
 
                 <button
                   type="submit"
-                  className="w-full py-3.5 rounded-2xl bg-[#1F3D2B] hover:bg-[#29523A] text-[#FAF8F5] font-extrabold text-xs uppercase tracking-[0.2em] shadow-xl transition-all"
+                  className="w-full py-3 sm:py-3.5 rounded-xl sm:rounded-2xl bg-[#1F3D2B] hover:bg-[#29523A] text-[#FAF8F5] font-extrabold text-[11px] sm:text-xs uppercase tracking-[0.18em] shadow-xl transition-all"
                 >
-                  Confirmar Horário com {currentBarber?.name.split(" ")[0]} • R${" "}
-                  {currentService?.price}
+                  Confirmar com {currentBarber?.name.split(" ")[0]} • R$ {currentService?.price}
                 </button>
               </form>
             ) : (
               /* TELA DE SUCESSO PÓS-RESERVA */
-              <div className="text-center py-4 space-y-4">
-                <span className="inline-block px-3 py-1 rounded-full bg-emerald-100 text-[#1F3D2B] text-xs font-extrabold">
+              <div className="text-center py-3 sm:py-4 space-y-3 sm:space-y-4">
+                <span className="inline-block px-3 py-1 rounded-full bg-emerald-100 text-[#1F3D2B] text-[11px] sm:text-xs font-extrabold">
                   ✅ CADEIRA RESERVADA • #{bookingConfirmed.id}
                 </span>
-                <h4 className="font-serif text-2xl font-black">
+                <h4 className="font-serif text-xl sm:text-2xl font-black">
                   Tudo pronto, {bookingConfirmed.clientName}!
                 </h4>
                 <p className="text-xs text-zinc-600">
@@ -812,7 +907,7 @@ export default function MLBarberVideoExperience() {
                   <strong>{bookingConfirmed.date}</strong> às{" "}
                   <strong>{bookingConfirmed.time}</strong>.
                 </p>
-                <div className="flex flex-col sm:flex-row gap-2 pt-2">
+                <div className="flex flex-col sm:flex-row gap-2 pt-1">
                   <a
                     href={`https://wa.me/${shop.whatsapp}?text=${encodeURIComponent(
                       `Olá! Fiz minha reserva pelo site da ML Barber (#${bookingConfirmed.id}):\n` +
@@ -823,13 +918,13 @@ export default function MLBarberVideoExperience() {
                     )}`}
                     target="_blank"
                     rel="noopener"
-                    className="flex-1 py-3.5 rounded-xl bg-[#1F3D2B] text-white text-xs font-extrabold uppercase tracking-wider"
+                    className="flex-1 py-3 sm:py-3.5 rounded-xl bg-[#1F3D2B] text-white text-xs font-extrabold uppercase tracking-wider"
                   >
                     Enviar Comprovante no WhatsApp ↗
                   </a>
                   <button
                     onClick={() => setBookingConfirmed(null)}
-                    className="px-4 py-3.5 rounded-xl bg-[#EFECE6] text-xs font-bold"
+                    className="px-4 py-3 sm:py-3.5 rounded-xl bg-[#EFECE6] text-xs font-bold"
                   >
                     Nova Reserva
                   </button>
