@@ -8,10 +8,15 @@ body {
   overflow-x: hidden;
 }
 
-/* Efeito de Blur Sumindo Abaixo no Título Monumental ML BARBER */
+/* Efeito de Blur Sumindo Abaixo no Título Monumental ML BARBER (sem caixa retangular de backdrop-blur) */
 .title-blur-fade {
-  mask-image: linear-gradient(to bottom, rgba(0,0,0,1) 42%, rgba(0,0,0,0.25) 82%, rgba(0,0,0,0) 100%);
-  -webkit-mask-image: linear-gradient(to bottom, rgba(0,0,0,1) 42%, rgba(0,0,0,0.25) 82%, rgba(0,0,0,0) 100%);
+  mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 1) 38%, rgba(0, 0, 0, 0.35) 76%, rgba(0, 0, 0, 0) 100%);
+  -webkit-mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 1) 38%, rgba(0, 0, 0, 0.35) 76%, rgba(0, 0, 0, 0) 100%);
+}
+
+.title-bottom-glow {
+  mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0) 30%, rgba(0, 0, 0, 0.9) 72%, rgba(0, 0, 0, 0) 100%);
+  -webkit-mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 0) 30%, rgba(0, 0, 0, 0.9) 72%, rgba(0, 0, 0, 0) 100%);
 }
 
 /* Scrollbar limpa nos seletores horizontais mobile */
